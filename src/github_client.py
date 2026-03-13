@@ -180,11 +180,11 @@ class GitHubClient:
 
     async def get_blame(self, owner: str, repo: str, path: str, ref: str = "HEAD") -> list:
         query = """
-        query($owner: String!, $repo: String!, $expression: String!) {
+        query($owner: String!, $repo: String!, $ref: String!, $path: String!) {
           repository(owner: $owner, name: $repo) {
-            object(expression: $expression) {
-              ... on Blob {
-                blame {
+            object(expression: $ref) {
+              ... on Commit {
+                blame(path: $path) {
                   ranges {
                     startingLine
                     endingLine
@@ -207,7 +207,8 @@ class GitHubClient:
         variables = {
             "owner": owner,
             "repo": repo,
-            "expression": f"{ref}:{path}",
+            "ref": ref,
+            "path": path,
         }
         data = await self.graphql(query, variables)
         obj = data.get("repository", {}).get("object")
