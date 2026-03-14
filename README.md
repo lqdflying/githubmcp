@@ -80,24 +80,113 @@ The server starts on `http://0.0.0.0:8000` with Streamable HTTP transport.
 
 ---
 
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_PAT` | **Yes** | GitHub Personal Access Token for API authentication |
+| `MCP_API_TOKEN` | No | Secret token to secure the MCP endpoint (recommended for production) |
+| `HOST` | No | Host to bind to (default: `0.0.0.0`) |
+| `PORT` | No | Port to listen on (default: `8000`) |
+
+> ⚠️ The server will **fail to start** if `GITHUB_PAT` is not set.
+
+---
+
 ## Docker
 
-### Build
+### 1. Prepare your environment file
+
+```bash
+cp .env.example .env
+# Edit .env and fill in your GITHUB_PAT and MCP_API_TOKEN
+```
+
+`.env` file:
+```env
+GITHUB_PAT=ghp_your_token_here
+MCP_API_TOKEN=your_secret_mcp_token_here
+HOST=0.0.0.0
+PORT=8000
+```
+
+> Generate a secure `MCP_API_TOKEN` with:
+> ```bash
+> python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+> ```
+
+### 2. Run with Docker Compose
+
+```bash
+docker compose up -d
+```
+
+To stop:
+```bash
+docker compose down
+```
+
+### Build locally (optional)
 
 ```bash
 docker build -t github-repo-reader-mcp .
 ```
 
-### Run
+---
 
-```bash
-docker run -d \
-  --name github-mcp \
-  -p 8000:8000 \
-  -e GITHUB_PAT=ghp_your_token_here \
-  -e MCP_API_TOKEN=your_secret_mcp_token_here \
-  github-repo-reader-mcp
+## Nginx Reverse Proxy
+
+Sample config to expose the server via HTTPS at your domain:
+
+```nginx
+# HTTP: Redirect all traffic to HTTPS
+server {
+    listen 80;
+    server_name githubmcp.example.com;
+    return 301 https://$host$request_uri;
+}
+
+# HTTPS: Reverse proxy to github-mcp container
+server {
+    listen 443 ssl http2;
+    server_name githubmcp.example.com;
+
+    ssl_certificate     /etc/nginx/cert/githubmcp.example.com.crt;
+    ssl_certificate_key /etc/nginx/cert/githubmcp.example.com.key;
+
+    ssl_protocols             TLSv1.2 TLSv1.3;
+    ssl_ciphers               ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:!aNULL:!eNULL:!EXPORT:!MD5:!RC4:!3DES;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache         shared:SSL:10m;
+    ssl_session_timeout       10m;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    access_log /var/log/nginx/githubmcp.access.log;
+    error_log  /var/log/nginx/githubmcp.error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+
+        # WebSocket + SSE streaming support
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade    $http_upgrade;
+        proxy_set_header   Connection "upgrade";
+
+        proxy_connect_timeout 300s;
+        proxy_send_timeout    300s;
+        proxy_read_timeout    300s;
+        proxy_buffering       off;
+    }
+}
 ```
+
+> Replace `githubmcp.example.com` with your actual domain and update the certificate paths accordingly.
 
 ---
 
