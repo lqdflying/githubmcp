@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from fastmcp.server.auth.providers.debug import DebugTokenVerifier
 
 from src.github_client import GitHubClient, GitHubAPIError
 from src.tools import file_ops, code_search, git_ops, repo_info
@@ -49,6 +50,19 @@ def _get_client() -> GitHubClient:
     return _github_client
 
 
+# ── Authentication ───────────────────────────────────────────────────
+
+_mcp_api_token = os.environ.get("MCP_API_TOKEN", "")
+if not _mcp_api_token:
+    print("ERROR: MCP_API_TOKEN environment variable is required.", file=sys.stderr)
+    sys.exit(1)
+
+_auth = DebugTokenVerifier(
+    validate=lambda token: token == _mcp_api_token,
+    client_id="mcp-client",
+    scopes=["read"],
+)
+
 # ── Initialize FastMCP server ────────────────────────────────────────
 
 mcp = FastMCP(
@@ -59,6 +73,7 @@ mcp = FastMCP(
         "Authenticate with a GitHub Personal Access Token."
     ),
     lifespan=lifespan,
+    auth=_auth,
 )
 
 

@@ -64,7 +64,10 @@ pip install -e .
 
 ```bash
 cp .env.example .env
-# Edit .env and set your GITHUB_PAT
+# Edit .env and set your GITHUB_PAT and MCP_API_TOKEN
+
+# Generate a secure MCP API token:
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
 ### 3. Run the Server
@@ -92,6 +95,7 @@ docker run -d \
   --name github-mcp \
   -p 8000:8000 \
   -e GITHUB_PAT=ghp_your_token_here \
+  -e MCP_API_TOKEN=your_secret_mcp_token_here \
   github-repo-reader-mcp
 ```
 
@@ -112,7 +116,10 @@ Configure your Copilot Studio agent to connect to this MCP server:
   "mcpServers": {
     "github-repo-reader": {
       "url": "http://localhost:8000/mcp",
-      "transport": "streamable-http"
+      "transport": "streamable-http",
+      "headers": {
+        "Authorization": "Bearer your_secret_mcp_token_here"
+      }
     }
   }
 }
@@ -126,13 +133,12 @@ Add to your VS Code `settings.json` or `.vscode/mcp.json`:
 
 ```json
 {
-  "mcpServers": {
+  "servers": {
     "github-repo-reader": {
-      "command": "python",
-      "args": ["server.py"],
-      "cwd": "/path/to/githubmcp",
-      "env": {
-        "GITHUB_PAT": "ghp_your_token_here"
+      "type": "http",
+      "url": "http://localhost:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:MCP_API_TOKEN}"
       }
     }
   }
