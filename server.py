@@ -4,6 +4,7 @@ Provides MCP tools for reading GitHub repository contents, searching code,
 viewing git history, and exploring repo structure — all via GitHub PAT auth.
 """
 
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -11,11 +12,19 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.debug import DebugTokenVerifier
+from fastmcp.server.middleware import Middleware
 
 from src.github_client import GitHubClient, GitHubAPIError
 from src.tools import file_ops, code_search, git_ops, repo_info
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("mcp")
 
 # ── Lifespan: create / validate / close the GitHub client ────────────
 
@@ -75,6 +84,29 @@ mcp = FastMCP(
     lifespan=lifespan,
     auth=_auth,
 )
+
+
+# ── Logging middleware ───────────────────────────────────────────────
+
+class LoggingMiddleware(Middleware):
+    async def on_call_tool(self, context, call_next):
+        name = context.message.name
+        args = context.message.arguments or {}
+        owner = args.get("owner", "")
+        repo = args.get("repo", "")
+        extra = {k: v for k, v in args.items() if k not in ("owner", "repo") and v is not None}
+        target = f"{owner}/{repo}" if owner else ""
+        extra_str = f"  {extra}" if extra else ""
+        log.info(f"▶ {name}  {target}{extra_str}")
+        try:
+            result = await call_next(context)
+            log.info(f"✓ {name}  OK")
+            return result
+        except Exception as e:
+            log.error(f"✗ {name}  FAILED: {e}")
+            raise
+
+mcp.add_middleware(LoggingMiddleware())
 
 
 # ═══════════════════════════════════════════════════════════════════════
