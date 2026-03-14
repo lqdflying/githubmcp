@@ -12,8 +12,12 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from fastmcp.server.auth import AccessToken
 from fastmcp.server.auth.providers.debug import DebugTokenVerifier
+from fastmcp.server.auth.providers.github import GitHubProvider
 from fastmcp.server.middleware import Middleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from src.github_client import GitHubClient, GitHubAPIError
 from src.tools import file_ops, code_search, git_ops, repo_info
@@ -62,16 +66,153 @@ def _get_client() -> GitHubClient:
 
 # ── Authentication ───────────────────────────────────────────────────
 
-_mcp_api_token = os.environ.get("MCP_API_TOKEN", "")
-if not _mcp_api_token:
-    print("ERROR: MCP_API_TOKEN environment variable is required.", file=sys.stderr)
+
+def _split_csv(raw: str) -> list[str]:
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _parse_bool(raw: str, default: bool = False) -> bool:
+    value = (raw or "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
+class TokenOrGitHubOAuthProvider(GitHubProvider):
+    """Accept either a shared static token or GitHub OAuth tokens.
+
+    This keeps existing automation that uses MCP_API_TOKEN while enabling
+    Power Automate OAuth flows on the same MCP endpoint.
+    """
+
+    def __init__(
+        self,
+        *,
+        mcp_api_token: str | None,
+        allow_static_token: bool,
+        allowed_github_logins: set[str] | None = None,
+        audit_logging_enabled: bool = False,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self._mcp_api_token = mcp_api_token
+        self._allow_static_token = allow_static_token
+        self._allowed_github_logins = {login.lower() for login in (allowed_github_logins or set())}
+        self._audit_logging_enabled = audit_logging_enabled
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        if self._allow_static_token and self._mcp_api_token and token == self._mcp_api_token:
+            if self._audit_logging_enabled:
+                log.info("AUTH success method=token")
+            return AccessToken(
+                token=token,
+                client_id="mcp-token-client",
+                scopes=["read"],
+                claims={"auth_mode": "static_token"},
+            )
+
+        access_token = await super().verify_token(token)
+        if access_token is None:
+            if self._audit_logging_enabled:
+                log.warning("AUTH failed method=oauth_or_token reason=invalid_or_expired")
+            return None
+
+        if not self._allowed_github_logins:
+            if self._audit_logging_enabled:
+                login = access_token.claims.get("login")
+                login_label = login if isinstance(login, str) else "unknown"
+                log.info(f"AUTH success method=oauth login={login_label}")
+            return access_token
+
+        login = access_token.claims.get("login")
+        if isinstance(login, str) and login.lower() in self._allowed_github_logins:
+            if self._audit_logging_enabled:
+                log.info(f"AUTH success method=oauth login={login}")
+            return access_token
+
+        if self._audit_logging_enabled:
+            blocked_login = login if isinstance(login, str) else "unknown"
+            log.warning(
+                f"AUTH rejected method=oauth login={blocked_login} reason=login_not_allowlisted"
+            )
+
+        return None
+
+
+_auth_mode = os.environ.get("MCP_AUTH_MODE", "both").strip().lower()
+_valid_auth_modes = {"token", "oauth", "both"}
+if _auth_mode not in _valid_auth_modes:
+    print(
+        "ERROR: MCP_AUTH_MODE must be one of: token, oauth, both.",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
-_auth = DebugTokenVerifier(
-    validate=lambda token: token == _mcp_api_token,
-    client_id="mcp-client",
-    scopes=["read"],
-)
+_need_token_auth = _auth_mode in {"token", "both"}
+_need_oauth_auth = _auth_mode in {"oauth", "both"}
+_auth_audit_logging_enabled = _parse_bool(os.environ.get("MCP_AUTH_AUDIT_LOG", "true"), True)
+
+_mcp_api_token = os.environ.get("MCP_API_TOKEN", "").strip()
+if _need_token_auth and not _mcp_api_token:
+    print("ERROR: MCP_API_TOKEN environment variable is required for token auth mode.", file=sys.stderr)
+    sys.exit(1)
+
+_github_client_id = os.environ.get("GITHUB_CLIENT_ID", "").strip()
+_github_client_secret = os.environ.get("GITHUB_CLIENT_SECRET", "").strip()
+_base_url = os.environ.get("BASE_URL", "").strip()
+_github_oauth_scopes = _split_csv(os.environ.get("GITHUB_OAUTH_SCOPES", "read:user"))
+_allowed_github_logins = set(_split_csv(os.environ.get("ALLOWED_GITHUB_LOGINS", "")))
+
+_oauth_vars = {
+    "GITHUB_CLIENT_ID": _github_client_id,
+    "GITHUB_CLIENT_SECRET": _github_client_secret,
+    "BASE_URL": _base_url,
+}
+_configured_oauth_vars = [name for name, value in _oauth_vars.items() if value]
+
+if _need_oauth_auth:
+    missing = [name for name, value in _oauth_vars.items() if not value]
+    if missing:
+        print(
+            "ERROR: GitHub OAuth is enabled but missing required environment variables: "
+            f"{', '.join(missing)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+elif _configured_oauth_vars and len(_configured_oauth_vars) != len(_oauth_vars):
+    missing = [name for name, value in _oauth_vars.items() if not value]
+    print(
+        "WARNING: GitHub OAuth variables are partially configured but OAuth is disabled by MCP_AUTH_MODE. "
+        f"Ignored variables are missing: {', '.join(missing)}",
+        file=sys.stderr,
+    )
+
+if _need_oauth_auth:
+    _auth = TokenOrGitHubOAuthProvider(
+        mcp_api_token=_mcp_api_token if _need_token_auth else None,
+        allow_static_token=_need_token_auth,
+        allowed_github_logins=_allowed_github_logins,
+        audit_logging_enabled=_auth_audit_logging_enabled,
+        client_id=_github_client_id,
+        client_secret=_github_client_secret,
+        base_url=_base_url,
+        required_scopes=_github_oauth_scopes,
+    )
+else:
+    def _validate_static_token(token: str) -> bool:
+        valid = token == _mcp_api_token
+        if _auth_audit_logging_enabled:
+            if valid:
+                log.info("AUTH success method=token")
+            else:
+                log.warning("AUTH failed method=token reason=invalid_or_expired")
+        return valid
+
+    _auth = DebugTokenVerifier(
+        validate=_validate_static_token,
+        client_id="mcp-client",
+        scopes=["read"],
+    )
 
 # ── Initialize FastMCP server ────────────────────────────────────────
 
@@ -123,9 +264,6 @@ mcp.add_middleware(LoggingMiddleware())
 
 
 # ── Health check endpoint ────────────────────────────────────────────
-
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health(request: Request) -> JSONResponse:
