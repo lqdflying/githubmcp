@@ -7,6 +7,7 @@ viewing git history, and exploring repo structure — all via GitHub PAT auth.
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -98,15 +99,37 @@ class LoggingMiddleware(Middleware):
         target = f"{owner}/{repo}" if owner else ""
         extra_str = f"  {extra}" if extra else ""
         log.info(f"▶ {name}  {target}{extra_str}")
+        t0 = time.monotonic()
         try:
             result = await call_next(context)
-            log.info(f"✓ {name}  OK")
+            elapsed = (time.monotonic() - t0) * 1000
+            # Estimate response size from result content
+            size = ""
+            try:
+                content = result.content
+                if content:
+                    chars = sum(len(c.text) for c in content if hasattr(c, "text"))
+                    size = f"  {chars:,} chars"
+            except Exception:
+                pass
+            log.info(f"✓ {name}  {elapsed:.0f}ms{size}")
             return result
         except Exception as e:
-            log.error(f"✗ {name}  FAILED: {e}")
+            elapsed = (time.monotonic() - t0) * 1000
+            log.error(f"✗ {name}  FAILED ({elapsed:.0f}ms): {e}  args={args}")
             raise
 
 mcp.add_middleware(LoggingMiddleware())
+
+
+# ── Health check endpoint ────────────────────────────────────────────
+
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok", "server": "GitHub Repo Reader"})
 
 
 # ═══════════════════════════════════════════════════════════════════════
