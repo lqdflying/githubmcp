@@ -100,7 +100,7 @@ The server starts on `http://0.0.0.0:8000` with Streamable HTTP transport.
 | `GITHUB_CLIENT_SECRET` | Conditional | Required with `GITHUB_CLIENT_ID` and `BASE_URL` to enable GitHub OAuth |
 | `BASE_URL` | Conditional | Public HTTPS URL of this server used for OAuth metadata/callbacks |
 | `GITHUB_OAUTH_SCOPES` | No | Comma-separated GitHub OAuth scopes (default: `read:user`) |
-| `ALLOWED_GITHUB_LOGINS` | No | Comma-separated GitHub logins allowed for OAuth sign-in |
+| `ALLOWED_GITHUB_LOGINS` | **Strongly recommended** | Comma-separated GitHub logins allowed for OAuth sign-in. **If empty, any GitHub account can authenticate.** Set to your own login for personal-only access. |
 | `HOST` | No | Host to bind to (default: `0.0.0.0`) |
 | `PORT` | No | Port to listen on (default: `8000`) |
 
@@ -119,6 +119,7 @@ The server starts on `http://0.0.0.0:8000` with Streamable HTTP transport.
 - `Authorization: Bearer <MCP_API_TOKEN>` works when `MCP_AUTH_MODE=token` or `MCP_AUTH_MODE=both`.
 - GitHub OAuth access tokens work when `MCP_AUTH_MODE=oauth` or `MCP_AUTH_MODE=both`.
 - If `ALLOWED_GITHUB_LOGINS` is set, only those GitHub accounts can authenticate via OAuth.
+- **If `ALLOWED_GITHUB_LOGINS` is empty, any valid GitHub account can authenticate via OAuth.** Always set this to your own login when deploying for personal use.
 
 ### Auth Audit Logs
 
@@ -279,6 +280,8 @@ Configure your Copilot Studio agent to connect to this MCP server:
 
 ## VS Code Integration
 
+### Option A: Static Token (local or trusted network)
+
 Add to your VS Code `settings.json` or `.vscode/mcp.json`:
 
 ```json
@@ -294,6 +297,27 @@ Add to your VS Code `settings.json` or `.vscode/mcp.json`:
   }
 }
 ```
+
+Requires `MCP_AUTH_MODE=token` or `MCP_AUTH_MODE=both` with `MCP_API_TOKEN` set in your environment.
+
+### Option B: GitHub OAuth (remote server)
+
+When the server is deployed remotely with `MCP_AUTH_MODE=oauth` or `MCP_AUTH_MODE=both`, VS Code will automatically discover the OAuth endpoint and prompt you to sign in with GitHub:
+
+```json
+{
+  "servers": {
+    "github-repo-reader": {
+      "type": "http",
+      "url": "https://your-server/mcp"
+    }
+  }
+}
+```
+
+VS Code sends an unauthenticated request, receives a `401` with OAuth metadata from FastMCP, then opens the GitHub authorization flow automatically. After sign-in, VS Code caches the token for subsequent calls.
+
+> **Important**: Set `ALLOWED_GITHUB_LOGINS=your-github-login` in `.env` to restrict OAuth sign-in to your own account. Without this, any GitHub user can authenticate.
 
 ---
 
