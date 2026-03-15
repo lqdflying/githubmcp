@@ -1,6 +1,6 @@
 # GitHub Repo Reader MCP Server
 
-An MCP (Model Context Protocol) server built with **FastMCP** that gives AI agents — such as those in **Copilot Studio** — the ability to read and explore GitHub repositories. Authenticates via **GitHub Personal Access Token (PAT)**.
+An MCP (Model Context Protocol) server built with **FastMCP** that gives AI agents — such as those in **Copilot Studio** — the ability to read and explore GitHub repositories. Tool access uses a **GitHub Personal Access Token (PAT)**. MCP clients can authenticate with a static bearer token and optionally **GitHub OAuth**.
 
 This server mirrors the same code-reading capabilities available locally in VS Code (file reading, directory listing, grep search, git log, diff, blame, etc.) but operates on remote GitHub repositories via the GitHub API.
 
@@ -24,6 +24,13 @@ This server mirrors the same code-reading capabilities available locally in VS C
 | 12 | `get_repo_structure` | Full repo tree view |
 | 13 | `get_languages` | Language breakdown |
 | 14 | `get_rate_limit` | Check GitHub API rate limit status |
+
+---
+
+## Documentation
+
+- [GitHub OAuth Callback Guide](docs/github-oauth-callback-guide.md) — callback URL choices for Power Automate vs server OAuth flow
+- [OAuth Callback Workflows](docs/oauth-callback-workflows.md) — sequence diagrams for Power Automate callback and native MCP callback flows
 
 ---
 
@@ -65,6 +72,7 @@ pip install -e .
 ```bash
 cp .env.example .env
 # Edit .env and set your GITHUB_PAT and MCP_API_TOKEN
+# Optional: also set GitHub OAuth vars for Power Automate
 
 # Generate a secure MCP API token:
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -85,11 +93,57 @@ The server starts on `http://0.0.0.0:8000` with Streamable HTTP transport.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GITHUB_PAT` | **Yes** | GitHub Personal Access Token for API authentication |
-| `MCP_API_TOKEN` | No | Secret token to secure the MCP endpoint (recommended for production) |
+| `MCP_AUTH_MODE` | No | Auth mode selector: `token`, `oauth`, or `both` (default: `both`) |
+| `MCP_AUTH_AUDIT_LOG` | No | Enable auth decision logs without secrets (default: `true`) |
+| `MCP_API_TOKEN` | Conditional | Required for `token` and `both` auth modes |
+| `GITHUB_CLIENT_ID` | Conditional | Required with `GITHUB_CLIENT_SECRET` and `BASE_URL` to enable GitHub OAuth |
+| `GITHUB_CLIENT_SECRET` | Conditional | Required with `GITHUB_CLIENT_ID` and `BASE_URL` to enable GitHub OAuth |
+| `BASE_URL` | Conditional | Public HTTPS URL of this server used for OAuth metadata/callbacks |
+| `GITHUB_OAUTH_SCOPES` | No | Comma-separated GitHub OAuth scopes (default: `read:user`) |
+| `ALLOWED_GITHUB_LOGINS` | **Strongly recommended** | Comma-separated GitHub logins allowed for OAuth sign-in. **If empty, any GitHub account can authenticate.** Set to your own login for personal-only access. |
 | `HOST` | No | Host to bind to (default: `0.0.0.0`) |
 | `PORT` | No | Port to listen on (default: `8000`) |
 
 > ⚠️ The server will **fail to start** if `GITHUB_PAT` is not set.
+>
+> ℹ️ If `MCP_AUTH_MODE=oauth` or `MCP_AUTH_MODE=both`, OAuth requires `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `BASE_URL`.
+
+### Auth Mode Switch
+
+- `MCP_AUTH_MODE=token`: token-only auth.
+- `MCP_AUTH_MODE=oauth`: GitHub OAuth-only auth.
+- `MCP_AUTH_MODE=both`: accepts either static token or GitHub OAuth token.
+
+### Dual Auth Behavior
+
+- `Authorization: Bearer <MCP_API_TOKEN>` works when `MCP_AUTH_MODE=token` or `MCP_AUTH_MODE=both`.
+- GitHub OAuth access tokens work when `MCP_AUTH_MODE=oauth` or `MCP_AUTH_MODE=both`.
+- If `ALLOWED_GITHUB_LOGINS` is set, only those GitHub accounts can authenticate via OAuth.
+- **If `ALLOWED_GITHUB_LOGINS` is empty, any valid GitHub account can authenticate via OAuth.** Always set this to your own login when deploying for personal use.
+
+### Auth Audit Logs
+
+- With `MCP_AUTH_AUDIT_LOG=true`, server logs include auth method and allowlist decisions.
+- Logged examples: `AUTH success method=token`, `AUTH success method=oauth login=<user>`, `AUTH rejected ... login_not_allowlisted`.
+- Token values and secrets are never written to logs.
+
+### Power Automate (GitHub OAuth)
+
+See [GitHub OAuth Callback Guide](docs/github-oauth-callback-guide.md) for callback URL selection and multi-flow setup.
+
+1. In GitHub, create an OAuth App and keep the Client ID and Client Secret.
+2. In this server `.env`, set:
+  - `GITHUB_CLIENT_ID`
+  - `GITHUB_CLIENT_SECRET`
+  - `BASE_URL` (public HTTPS URL of your MCP server)
+  - `ALLOWED_GITHUB_LOGINS` (your GitHub login for personal-only access)
+3. Start the server and open your Power Automate custom connector **Security** tab.
+4. Set **Authentication type** = `OAuth 2.0`, **Identity Provider** = `GitHub`.
+5. Enter Client ID/Secret and scope (`read:user` recommended for least privilege).
+6. Save connector to generate the Redirect URL, then add that Redirect URL as OAuth callback URL in your GitHub OAuth App.
+7. Re-open/test connector connection.
+
+> Note: OAuth scope controls permissions, not account identity. Use `ALLOWED_GITHUB_LOGINS` to restrict sign-in to your account.
 
 ---
 
@@ -100,12 +154,20 @@ The server starts on `http://0.0.0.0:8000` with Streamable HTTP transport.
 ```bash
 cp .env.example .env
 # Edit .env and fill in your GITHUB_PAT and MCP_API_TOKEN
+# Optional: add OAuth vars for Power Automate GitHub sign-in
 ```
 
 `.env` file:
 ```env
 GITHUB_PAT=ghp_your_token_here
+MCP_AUTH_MODE=both
+MCP_AUTH_AUDIT_LOG=true
 MCP_API_TOKEN=your_secret_mcp_token_here
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+BASE_URL=
+GITHUB_OAUTH_SCOPES=read:user
+ALLOWED_GITHUB_LOGINS=
 HOST=0.0.0.0
 PORT=8000
 ```
@@ -218,6 +280,8 @@ Configure your Copilot Studio agent to connect to this MCP server:
 
 ## VS Code Integration
 
+### Option A: Static Token (local or trusted network)
+
 Add to your VS Code `settings.json` or `.vscode/mcp.json`:
 
 ```json
@@ -233,6 +297,27 @@ Add to your VS Code `settings.json` or `.vscode/mcp.json`:
   }
 }
 ```
+
+Requires `MCP_AUTH_MODE=token` or `MCP_AUTH_MODE=both` with `MCP_API_TOKEN` set in your environment.
+
+### Option B: GitHub OAuth (remote server)
+
+When the server is deployed remotely with `MCP_AUTH_MODE=oauth` or `MCP_AUTH_MODE=both`, VS Code will automatically discover the OAuth endpoint and prompt you to sign in with GitHub:
+
+```json
+{
+  "servers": {
+    "github-repo-reader": {
+      "type": "http",
+      "url": "https://your-server/mcp"
+    }
+  }
+}
+```
+
+VS Code sends an unauthenticated request, receives a `401` with OAuth metadata from FastMCP, then opens the GitHub authorization flow automatically. After sign-in, VS Code caches the token for subsequent calls.
+
+> **Important**: Set `ALLOWED_GITHUB_LOGINS=your-github-login` in `.env` to restrict OAuth sign-in to your own account. Without this, any GitHub user can authenticate.
 
 ---
 
