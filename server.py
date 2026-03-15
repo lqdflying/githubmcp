@@ -4,6 +4,7 @@ Provides MCP tools for reading GitHub repository contents, searching code,
 viewing git history, and exploring repo structure — all via GitHub PAT auth.
 """
 
+import hmac
 import logging
 import os
 import sys
@@ -101,7 +102,7 @@ class TokenOrGitHubOAuthProvider(GitHubProvider):
         self._audit_logging_enabled = audit_logging_enabled
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        if self._allow_static_token and self._mcp_api_token and token == self._mcp_api_token:
+        if self._allow_static_token and self._mcp_api_token and hmac.compare_digest(token, self._mcp_api_token):
             if self._audit_logging_enabled:
                 log.info("AUTH success method=token")
             return AccessToken(
