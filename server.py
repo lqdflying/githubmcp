@@ -656,11 +656,42 @@ async def get_rate_limit() -> str:
 # ── Entry point ──────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import warnings
+    import uvicorn
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module="websockets")
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module="uvicorn")
+
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8000"))
+    upstash_rest_url = os.environ.get("UPSTASH_REDIS_REST_URL", "").strip()
+    upstash_rest_token = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "").strip()
 
-    mcp.run(
-        transport="streamable-http",
-        host=host,
-        port=port,
-    )
+    if upstash_rest_url and upstash_rest_token:
+        # Stateful mode: sessions persist in Upstash Redis across restarts.
+        # Constructs a standard Redis URL from the Upstash REST env vars
+        # (same credential, different protocol). http_app() is called directly
+        # because run_http_async() does not expose the event_store parameter.
+        from urllib.parse import urlparse
+        from redis.asyncio import Redis as AsyncRedis
+        from key_value.aio.stores.redis import RedisStore
+        from fastmcp.server.event_store import EventStore as FastMCPEventStore
+
+        _upstash_host = urlparse(upstash_rest_url).hostname or upstash_rest_url
+        _redis_url = f"rediss://default:{upstash_rest_token}@{_upstash_host}:6379"
+        redis_client = AsyncRedis.from_url(_redis_url, decode_responses=True)
+        event_store = FastMCPEventStore(storage=RedisStore(client=redis_client))
+        app = mcp.http_app(
+            transport="streamable-http",
+            event_store=event_store,
+            stateless_http=False,
+        )
+        log.info("Starting in stateful mode with Upstash Redis event store")
+        uvicorn.run(app, host=host, port=port, lifespan="on")
+    else:
+        # Stateless mode (default): no session tracking, survives restarts.
+        mcp.run(
+            transport="streamable-http",
+            host=host,
+            port=port,
+            stateless_http=True,
+        )
