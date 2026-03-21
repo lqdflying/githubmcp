@@ -201,7 +201,7 @@ if _need_oauth_auth:
     )
 else:
     def _validate_static_token(token: str) -> bool:
-        valid = token == _mcp_api_token
+        valid = hmac.compare_digest(token, _mcp_api_token)
         if _auth_audit_logging_enabled:
             if valid:
                 log.info("AUTH success method=token")
