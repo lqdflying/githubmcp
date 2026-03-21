@@ -11,7 +11,7 @@ An MCP (Model Context Protocol) server built with **FastMCP** that gives AI agen
 - [Prerequisites](#prerequisites)
 - [Setup Scenarios](#setup-scenarios)
 - [Account Access Control](#account-access-control)
-- [Creating a GitHub OAuth App](#creating-a-github-oauth-app)
+- [Creating a GitHub App](#creating-a-github-app)
 - [Environment Variables Reference](#environment-variables-reference)
 - [Docker Deployment](#docker-deployment)
 - [Nginx Reverse Proxy](#nginx-reverse-proxy)
@@ -160,11 +160,11 @@ Authenticated as GitHub user: your-username
 
 The server is deployed on a remote machine. VS Code signs in with GitHub OAuth — no static token needed on the client.
 
-**Step 1 — Create a GitHub OAuth App**
+**Step 1 — Create a GitHub App**
 
-See [Creating a GitHub OAuth App](#creating-a-github-oauth-app). Use this callback URL:
+See [Creating a GitHub App](#creating-a-github-app). Add this callback URL:
 ```
-https://your-domain/oauth/callback
+https://your-domain/auth/callback
 ```
 
 **Step 2 — Configure `.env` on the server**
@@ -172,8 +172,8 @@ https://your-domain/oauth/callback
 ```env
 GITHUB_PAT=ghp_your_github_pat_here
 MCP_AUTH_MODE=oauth
-GITHUB_CLIENT_ID=your_oauth_app_client_id
-GITHUB_CLIENT_SECRET=your_oauth_app_client_secret
+GITHUB_CLIENT_ID=your_github_app_client_id
+GITHUB_CLIENT_SECRET=your_github_app_client_secret
 BASE_URL=https://your-domain
 ALLOWED_GITHUB_LOGINS=your-github-username
 ```
@@ -194,17 +194,17 @@ VS Code will open a browser sign-in prompt the first time it connects.
 
 Connect Copilot Studio (via Power Automate custom connector) using GitHub OAuth.
 
-**Step 1 — Create a GitHub OAuth App**
+**Step 1 — Create a GitHub App**
 
-See [Creating a GitHub OAuth App](#creating-a-github-oauth-app). Leave the callback URL blank for now — you'll get it from Power Automate in Step 4.
+See [Creating a GitHub App](#creating-a-github-app). Leave the Copilot Studio callback URL blank for now — you'll get it from Power Automate in Step 4, then add it to the GitHub App.
 
 **Step 2 — Configure `.env` on the server**
 
 ```env
 GITHUB_PAT=ghp_your_github_pat_here
 MCP_AUTH_MODE=oauth
-GITHUB_CLIENT_ID=your_oauth_app_client_id
-GITHUB_CLIENT_SECRET=your_oauth_app_client_secret
+GITHUB_CLIENT_ID=your_github_app_client_id
+GITHUB_CLIENT_SECRET=your_github_app_client_secret
 BASE_URL=https://your-domain
 ALLOWED_GITHUB_LOGINS=your-github-username
 ```
@@ -219,28 +219,35 @@ docker compose up -d
 
 ---
 
-### Scenario 4 — Remote server, both VS Code and Copilot Studio
+### Scenario 4 — Remote server, VS Code OAuth + Copilot Studio OAuth simultaneously
 
-Support VS Code (via static token) and Copilot Studio (via OAuth) on the same server simultaneously.
+Use a single **GitHub App** (supports up to 10 callback URLs) so both VS Code and Copilot Studio authenticate via OAuth on the same server with the same credentials.
 
-**Configure `.env`**
+**Step 1 — Create a GitHub App**
+
+See [Creating a GitHub App](#creating-a-github-app). Add **both** callback URLs:
+```
+https://your-domain/auth/callback
+https://global.consent.azure-apim.net/redirect
+```
+
+**Step 2 — Configure `.env`**
 
 ```env
 GITHUB_PAT=ghp_your_github_pat_here
 MCP_AUTH_MODE=both
 MCP_API_TOKEN=your_secret_token_here
-GITHUB_CLIENT_ID=your_oauth_app_client_id
-GITHUB_CLIENT_SECRET=your_oauth_app_client_secret
+GITHUB_CLIENT_ID=your_github_app_client_id
+GITHUB_CLIENT_SECRET=your_github_app_client_secret
 BASE_URL=https://your-domain
 ALLOWED_GITHUB_LOGINS=your-github-username
 ```
 
 With `MCP_AUTH_MODE=both`:
-- VS Code connects with `Authorization: Bearer your_secret_token_here`
-- Copilot Studio connects via GitHub OAuth
-- Both use the same `/mcp` endpoint
-
-> **Note:** If you need both VS Code OAuth *and* Copilot Studio OAuth simultaneously, you need two separate GitHub OAuth Apps (one per callback URL). See [Creating a GitHub OAuth App](#creating-a-github-oauth-app).
+- VS Code and Copilot Studio both connect via GitHub OAuth
+- Static token (`MCP_API_TOKEN`) is also accepted for automation/testing
+- All clients use the same `/mcp` endpoint
+- A single GitHub App handles all OAuth callbacks — no need for multiple apps
 
 ---
 
@@ -277,28 +284,32 @@ AUTH rejected method=oauth login=someone-else reason=login_not_allowlisted
 
 ---
 
-## Creating a GitHub OAuth App
+## Creating a GitHub App
 
-Required for Scenarios 2, 3, and 4.
+Required for Scenarios 2, 3, and 4. GitHub Apps support **up to 10 callback URLs**, so a single app handles VS Code, Copilot Studio, and any other OAuth client simultaneously — no need to create multiple apps.
 
-1. Go to **[GitHub → Settings → Developer Settings → OAuth Apps](https://github.com/settings/developers)**
-2. Click **New OAuth App**
-3. Fill in the form:
-   - **Application name**: e.g. `My GitHub MCP Server`
+1. Go to **[GitHub → Settings → Developer Settings → GitHub Apps](https://github.com/settings/apps/new)**
+2. Fill in the form:
+   - **GitHub App name**: e.g. `my-githubmcp` (must be globally unique)
    - **Homepage URL**: your server URL, e.g. `https://your-domain`
-   - **Authorization callback URL**: see table below
-4. Click **Register application**
-5. Note the **Client ID**
-6. Click **Generate a new client secret** and copy it immediately
+   - **Callback URL**: add one per line (see table below)
+   - **Webhook**: uncheck **Active** (not needed)
+3. Under **Account permissions**:
+   - **Email addresses** → Read-only
+   - **Profile** → Read-only
+4. Under **"Where can this GitHub App be installed?"** → select **Only on this account**
+5. Click **Create GitHub App**
+6. Note the **Client ID**
+7. Click **Generate a new client secret** and copy it immediately
 
-### Which callback URL to use
+### Which callback URLs to add
 
-| Integration | Callback URL to set in the GitHub OAuth App |
-|-------------|---------------------------------------------|
-| VS Code (native MCP OAuth) | `https://your-domain/oauth/callback` |
-| Power Automate / Copilot Studio | The Redirect URL generated by Power Automate — get it from the connector Security tab after first save |
+| Integration | Callback URL |
+|-------------|--------------|
+| VS Code (native MCP OAuth) | `https://your-domain/auth/callback` |
+| Power Automate / Copilot Studio | The Redirect URL generated by Power Automate — get it from the connector Security tab after first save, then add it here |
 
-> If you need VS Code OAuth *and* Copilot Studio OAuth at the same time, create **two separate GitHub OAuth Apps**, each with its own callback URL.
+> You can add all callback URLs upfront or add the Power Automate one later — GitHub Apps let you edit them at any time.
 
 ---
 
@@ -310,10 +321,10 @@ Required for Scenarios 2, 3, and 4.
 | `MCP_AUTH_MODE` | No | `both` | `token` — static token only; `oauth` — GitHub OAuth only; `both` — either method accepted |
 | `MCP_AUTH_AUDIT_LOG` | No | `true` | Log auth decisions (method, login, allowlist result). Never logs token values. |
 | `MCP_API_TOKEN` | Conditional | — | Required when `MCP_AUTH_MODE=token` or `both`. The shared secret clients send as a Bearer token. |
-| `GITHUB_CLIENT_ID` | Conditional | — | GitHub OAuth App client ID. Required when OAuth is enabled. |
-| `GITHUB_CLIENT_SECRET` | Conditional | — | GitHub OAuth App client secret. Required when OAuth is enabled. |
+| `GITHUB_CLIENT_ID` | Conditional | — | GitHub App client ID. Required when OAuth is enabled. |
+| `GITHUB_CLIENT_SECRET` | Conditional | — | GitHub App client secret. Required when OAuth is enabled. |
 | `BASE_URL` | Conditional | — | Public HTTPS URL of this server, e.g. `https://your-domain`. Required when OAuth is enabled (used for OAuth metadata and callbacks). |
-| `GITHUB_OAUTH_SCOPES` | No | `read:user` | Scopes requested during GitHub OAuth. `read:user` is sufficient for identity verification since the server uses its own PAT for GitHub API access. |
+| `GITHUB_OAUTH_SCOPES` | No | `user` | Scopes requested during GitHub OAuth. `user` is sufficient for identity verification. Child scopes like `read:user` are automatically normalised to their parent (`user`) at startup, so both values behave identically. |
 | `ALLOWED_GITHUB_LOGINS` | **Strongly recommended** | *(empty = allow all)* | Comma-separated GitHub usernames permitted for OAuth. **Empty means any GitHub account can sign in.** |
 | `HOST` | No | `0.0.0.0` | Network interface to bind to |
 | `PORT` | No | `8000` | Port to listen on |
@@ -339,7 +350,7 @@ MCP_API_TOKEN=your_secret_mcp_token_here
 GITHUB_CLIENT_ID=your_oauth_client_id
 GITHUB_CLIENT_SECRET=your_oauth_client_secret
 BASE_URL=https://your-domain
-GITHUB_OAUTH_SCOPES=read:user
+GITHUB_OAUTH_SCOPES=user
 ALLOWED_GITHUB_LOGINS=your-github-username
 HOST=0.0.0.0
 PORT=8000
@@ -460,6 +471,8 @@ On first use, VS Code detects that the server requires OAuth (from the `401` res
 
 Requires `MCP_AUTH_MODE=oauth` or `MCP_AUTH_MODE=both`, all three OAuth env vars set, and `ALLOWED_GITHUB_LOGINS=your-username`.
 
+The GitHub App callback URL for VS Code must be set to `https://your-domain/auth/callback`.
+
 ### Using in VS Code Copilot Chat
 
 Once connected, open **Copilot Chat** (`Ctrl+Shift+I` / `Cmd+Shift+I`), switch to **Agent mode**, and try:
@@ -508,12 +521,12 @@ Complete [Scenario 3](#scenario-3--remote-server-copilot-studio-with-github-oaut
 3. Fill in:
    - **Authorization URL**: `https://github.com/login/oauth/authorize`
    - **Token URL**: `https://github.com/login/oauth/access_token`
-   - **Client ID**: your GitHub OAuth App client ID
-   - **Client Secret**: your GitHub OAuth App client secret
-   - **Scope**: `read:user`
+   - **Client ID**: your GitHub App client ID
+   - **Client Secret**: your GitHub App client secret
+   - **Scope**: `user`
 4. Click **Update connector**
 5. Power Automate generates a **Redirect URL** — copy it
-6. Go to your [GitHub OAuth App settings](https://github.com/settings/developers) and paste that Redirect URL as the **Authorization callback URL**
+6. Go to your [GitHub App settings](https://github.com/settings/apps) and add that Redirect URL as an additional **Callback URL**
 
 **Step 3 — Test the connection**
 
@@ -711,6 +724,8 @@ docs/
 |----------|--------|
 | Read-only — no write tools | Safe to expose to AI agents without risk of data modification |
 | Server-side PAT for all GitHub calls | Clients never need GitHub permissions themselves; OAuth is identity-only |
+| GitHub App (not OAuth App) for OAuth | GitHub Apps support up to 10 callback URLs — one app covers VS Code, Copilot Studio, and any other client |
+| Scope normalisation at startup | `GITHUB_OAUTH_SCOPES` child scopes (e.g. `read:user`) are mapped to their GitHub parent (`user`) at parse time. GitHub App tokens return only the parent scope (or nothing); requiring the parent directly means both classic OAuth Apps and GitHub Apps pass the same check without any runtime scope expansion logic. |
 | In-memory TTL cache | Reduces GitHub API calls; trees cached 5 min, files 2 min |
 | Large file fallback to Blobs API | Files > 1 MB bypass the Contents API size limit automatically |
 | Dual search strategy | Simple text → GitHub Search API; regex or branch-specific → local `re` search |
@@ -732,6 +747,8 @@ Use `get_rate_limit` to check your current status before heavy operations.
 
 - [GitHub OAuth Callback Guide](docs/github-oauth-callback-guide.md) — which callback URL to use for Power Automate vs VS Code OAuth
 - [OAuth Callback Workflows](docs/oauth-callback-workflows.md) — sequence diagrams for each OAuth flow
+
+> **Note:** All references to "GitHub OAuth App" in older docs should be read as "GitHub App" (the newer type). GitHub Apps are preferred because they support multiple callback URLs.
 
 ---
 
