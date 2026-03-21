@@ -197,7 +197,7 @@ class TokenOrGitHubOAuthProvider(GitHubProvider):
             return AccessToken(
                 token=token,
                 client_id="mcp-token-client",
-                scopes=["read"],
+                scopes=list(self.required_scopes) if self.required_scopes else ["read"],
                 claims={"auth_mode": "static_token"},
             )
 
