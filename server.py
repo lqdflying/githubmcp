@@ -17,7 +17,7 @@ from fastmcp import FastMCP
 from fastmcp.server.auth import AccessToken
 from fastmcp.server.auth.cimd import CIMDClientManager
 from fastmcp.server.auth.providers.debug import DebugTokenVerifier
-from fastmcp.server.auth.providers.github import GitHubProvider, GitHubTokenVerifier
+from fastmcp.server.auth.providers.github import GitHubProvider
 from fastmcp.server.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -113,66 +113,36 @@ class _RFC8252CIMDManager(CIMDClientManager):
         return client
 
 
-# ── GitHub scope hierarchy ────────────────────────────────────────────
-# GitHub scope hierarchy: broader scopes imply narrower ones.
-# GitHub Apps use permissions (not classic OAuth scopes), so X-OAuth-Scopes
-# may be absent or return the broad "user" scope instead of "read:user".
-_GITHUB_SCOPE_IMPLIES: dict[str, set[str]] = {
-    "user": {"read:user", "user:email", "user:follow"},
-    "repo": {"public_repo", "repo:status", "repo:deployment", "repo:invite", "security_events"},
-    "admin:org": {"write:org", "read:org", "manage_runners:org"},
-    "write:org": {"read:org"},
-    "admin:repo_hook": {"write:repo_hook", "read:repo_hook"},
+# GitHub child-to-parent scope mapping.
+# GitHub App tokens return only a broad parent scope (or nothing) via X-OAuth-Scopes.
+# Normalise any child scope in GITHUB_OAUTH_SCOPES to its parent so the token
+# check always uses the scope GitHub actually reports.
+_GITHUB_CHILD_TO_PARENT: dict[str, str] = {
+    "read:user": "user",
+    "user:email": "user",
+    "user:follow": "user",
+    "public_repo": "repo",
+    "repo:status": "repo",
+    "repo:deployment": "repo",
+    "repo:invite": "repo",
+    "security_events": "repo",
+    "read:org": "admin:org",
+    "write:org": "admin:org",
+    "read:repo_hook": "write:repo_hook",
+    "write:repo_hook": "admin:repo_hook",
 }
 
 
-class _ScopeAwareGitHubTokenVerifier(GitHubTokenVerifier):
-    """GitHubTokenVerifier that understands GitHub's scope hierarchy.
-
-    GitHub App user access tokens often omit X-OAuth-Scopes or return
-    only the broad parent scope (e.g. "user") rather than the narrower
-    child scope (e.g. "read:user").  This verifier expands the token's
-    reported scopes using the known hierarchy before checking required scopes,
-    so both classic OAuth Apps and GitHub Apps pass the same scope requirement.
-
-    Uses a separate immutable _check_scopes field (not the mutable required_scopes
-    attribute) to avoid a race condition where concurrent async requests could read
-    each other's temporary required_scopes=None mutation across an await point.
-    """
-
-    def __init__(self, *, check_scopes: list[str] | None = None, **kwargs):
-        # Pass required_scopes=None so the parent never does its own scope check.
-        # We perform the expanded scope check ourselves via _check_scopes.
-        super().__init__(required_scopes=None, **kwargs)
-        self._check_scopes: list[str] = list(check_scopes or [])
-
-    async def verify_token(self, token: str) -> AccessToken | None:
-        # Run base verification with no required-scope check (required_scopes=None)
-        access_token = await super().verify_token(token)
-
-        if access_token is None:
-            return None
-
-        if not self._check_scopes:
-            return access_token
-
-        # Expand token scopes via hierarchy (e.g. "user" → adds "read:user")
-        expanded: set[str] = set(access_token.scopes)
-        for scope in access_token.scopes:
-            expanded.update(_GITHUB_SCOPE_IMPLIES.get(scope, set()))
-
-        if not set(self._check_scopes).issubset(expanded):
-            logger.debug(
-                "GitHub token missing required scopes. Has %s (expanded: %s), needs %s",
-                access_token.scopes,
-                expanded,
-                self._check_scopes,
-            )
-            return None
-
-        # Return token with expanded scopes so FastMCP's outer middleware also
-        # sees the full implied scope set (e.g. "user" implies "read:user").
-        return access_token.model_copy(update={"scopes": list(expanded)})
+def _normalize_oauth_scopes(scopes: list[str]) -> list[str]:
+    """Map child scopes to their GitHub parent scope, removing duplicates."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for s in scopes:
+        parent = _GITHUB_CHILD_TO_PARENT.get(s, s)
+        if parent not in seen:
+            seen.add(parent)
+            result.append(parent)
+    return result
 
 
 def _split_csv(raw: str) -> list[str]:
@@ -208,27 +178,12 @@ class TokenOrGitHubOAuthProvider(GitHubProvider):
         self._allowed_github_logins = {login.lower() for login in (allowed_github_logins or set())}
         self._audit_logging_enabled = audit_logging_enabled
 
-        # Replace the default GitHubTokenVerifier with a scope-hierarchy-aware
-        # version so GitHub App user access tokens (which omit X-OAuth-Scopes or
-        # return only the broad parent scope) pass the same required-scope check
-        # as classic GitHub OAuth App tokens.
-        orig: GitHubTokenVerifier = self._token_validator  # type: ignore[assignment]
-        original_required_scopes: list[str] = list(orig.required_scopes or [])
-        # Pass check_scopes (not required_scopes) so the verifier uses an immutable
-        # field for scope checking — avoids a race condition where concurrent async
-        # requests mutate required_scopes=None across an await point.
-        self._token_validator = _ScopeAwareGitHubTokenVerifier(
-            check_scopes=original_required_scopes,
-            timeout_seconds=orig.timeout_seconds,
-            http_client=orig._http_client,
-        )
-
         # Replace the CIMD manager with an RFC 8252-aware version that:
         # 1. Normalizes fixed loopback ports to wildcards (RFC 8252 §7.3)
         # 2. Sets default_scope so CIMD clients that don't declare a scope
         #    (e.g. VS Code) are allowed to request the server's required scopes.
         if self._cimd_manager is not None:
-            default_scope = " ".join(original_required_scopes) if original_required_scopes else None
+            default_scope = " ".join(self.required_scopes) if self.required_scopes else None
             self._cimd_manager = _RFC8252CIMDManager(
                 enable_cimd=True,
                 default_scope=default_scope,
@@ -295,7 +250,7 @@ if _need_token_auth and not _mcp_api_token:
 _github_client_id = os.environ.get("GITHUB_CLIENT_ID", "").strip()
 _github_client_secret = os.environ.get("GITHUB_CLIENT_SECRET", "").strip()
 _base_url = os.environ.get("BASE_URL", "").strip()
-_github_oauth_scopes = _split_csv(os.environ.get("GITHUB_OAUTH_SCOPES", "read:user"))
+_github_oauth_scopes = _normalize_oauth_scopes(_split_csv(os.environ.get("GITHUB_OAUTH_SCOPES", "user")))
 _allowed_github_logins = set(_split_csv(os.environ.get("ALLOWED_GITHUB_LOGINS", "")))
 
 _oauth_vars = {
