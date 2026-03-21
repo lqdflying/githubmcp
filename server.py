@@ -665,12 +665,15 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
     upstash_rest_url = os.environ.get("UPSTASH_REDIS_REST_URL", "").strip()
     upstash_rest_token = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "").strip()
+    # MCP_STATELESS=false enables stateful SSE event replay via Redis.
+    # Default is true (stateless): survives restarts, no stale session issues.
+    # Set to false only when using streaming tools that need resume-on-reconnect.
+    stateless = _parse_bool(os.environ.get("MCP_STATELESS", "true"), default=True)
 
-    if upstash_rest_url and upstash_rest_token:
-        # Stateful mode: sessions persist in Upstash Redis across restarts.
-        # Constructs a standard Redis URL from the Upstash REST env vars
-        # (same credential, different protocol). http_app() is called directly
-        # because run_http_async() does not expose the event_store parameter.
+    if not stateless and upstash_rest_url and upstash_rest_token:
+        # Stateful mode with SSE event replay: clients can resume a dropped SSE
+        # stream using Last-Event-ID. Requires Redis. Sessions are in-memory so
+        # clients must re-initialise after a server restart.
         from urllib.parse import urlparse
         from redis.asyncio import Redis as AsyncRedis
         from key_value.aio.stores.redis import RedisStore
@@ -685,10 +688,16 @@ if __name__ == "__main__":
             event_store=event_store,
             stateless_http=False,
         )
-        log.info("Starting in stateful mode with Upstash Redis event store")
+        log.info("Starting in stateful mode with Upstash Redis SSE event replay")
         uvicorn.run(app, host=host, port=port, lifespan="on")
     else:
-        # Stateless mode (default): no session tracking, survives restarts.
+        if not stateless and (not upstash_rest_url or not upstash_rest_token):
+            log.warning(
+                "MCP_STATELESS=false requires UPSTASH_REDIS_REST_URL and "
+                "UPSTASH_REDIS_REST_TOKEN — falling back to stateless mode"
+            )
+        # Stateless mode (default): new transport per request, survives restarts,
+        # no stale session IDs. Redis vars are ignored in this mode.
         mcp.run(
             transport="streamable-http",
             host=host,
