@@ -96,9 +96,32 @@ GitHub API
 1. Go to **[GitHub Settings → Developer Settings → Personal Access Tokens](https://github.com/settings/tokens)**
 2. Click **Generate new token (classic)** or **Fine-grained tokens → Generate new token**
 3. For classic: tick the **`repo`** scope
-4. For fine-grained: set **Contents: Read** and **Metadata: Read** under repository permissions
+4. For fine-grained: follow the steps below
 5. Set an expiry and click **Generate token**
 6. **Copy the token immediately** — GitHub only shows it once
+
+#### Fine-grained token setup (recommended)
+
+**Repository access** — choose one:
+
+| Option | When to use |
+|--------|-------------|
+| **Only select repositories** | Limit the token to specific repos (more secure; you pick which repos) |
+| **All repositories** | Use when you want the MCP to access any repo your account can see, including arbitrary public repos |
+
+> If you choose *Only select repositories*, the MCP can only access the repos you explicitly select here. Pointing it at any other repo (even a public one) will return a 403/404.
+
+**Permissions** — under *Repository permissions*, set:
+
+| Permission | Access | Notes |
+|------------|--------|-------|
+| **Contents** | Read-only | **Required** — file content, trees, blobs, commits, branches, diffs, blame |
+| **Metadata** | Read-only | **Required** — repo info, language breakdown (auto-selected by GitHub) |
+| Actions | Read-only | Optional — not used by this server |
+| Commit statuses | Read-only | Optional — not used by this server |
+| Pull requests | Read-only | Optional — not used by this server |
+
+> Only `Contents: Read` and `Metadata: Read` are required. The others can be left at *No access*.
 
 ---
 
