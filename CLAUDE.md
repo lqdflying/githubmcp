@@ -27,14 +27,25 @@ ruff format .
 
 ## Environment
 
-Two environment variables are **required** at startup — the server exits immediately if either is missing:
+`GITHUB_PAT` is always required. Auth-mode variables determine what else is needed:
 
-- `GITHUB_PAT` — GitHub Personal Access Token (classic: `repo` scope; fine-grained: `Contents: Read` + `Metadata: Read`)
-- `MCP_API_TOKEN` — Bearer token clients must send to authenticate against the MCP endpoint
+| Variable | Required | Description |
+|---|---|---|
+| `GITHUB_PAT` | Always | GitHub PAT (classic: `repo` scope; fine-grained: `Contents: Read` + `Metadata: Read`) |
+| `MCP_AUTH_MODE` | No (default: `both`) | `token` \| `oauth` \| `both` |
+| `MCP_API_TOKEN` | When mode is `token` or `both` | Static bearer token for clients |
+| `GITHUB_CLIENT_ID` | When mode is `oauth` or `both` | GitHub OAuth App client ID |
+| `GITHUB_CLIENT_SECRET` | When mode is `oauth` or `both` | GitHub OAuth App client secret |
+| `BASE_URL` | When mode is `oauth` or `both` | Public URL of this server (for OAuth callbacks) |
+| `GITHUB_OAUTH_SCOPES` | No (default: `read:user`) | Comma-separated OAuth scopes |
+| `ALLOWED_GITHUB_LOGINS` | No | Comma-separated GitHub logins allowed via OAuth; empty = all users |
+| `MCP_AUTH_AUDIT_LOG` | No (default: `true`) | Log auth decisions (never logs token values) |
+| `UPSTASH_REDIS_REST_URL` | No (pair with TOKEN) | Upstash REST URL, e.g. `https://host.upstash.io` — enables stateful sessions; both vars required |
+| `UPSTASH_REDIS_REST_TOKEN` | No (pair with URL) | Upstash REST token — enables stateful sessions; both vars required |
+| `HOST` | No (default: `0.0.0.0`) | Bind address |
+| `PORT` | No (default: `8000`) | Bind port |
 
-Optional: `HOST` (default `0.0.0.0`), `PORT` (default `8000`).
-
-Copy `.env.example` to `.env` and fill in both values before running.
+Copy `.env.example` to `.env` and fill in values before running.
 
 ## Architecture
 
@@ -76,4 +87,10 @@ Files > 1 MB are fetched via the Git Blobs API (`get_blob`) instead of the Conte
 
 ### Auth
 
-MCP endpoint auth uses FastMCP's `DebugTokenVerifier` with a simple equality check against `MCP_API_TOKEN`. The `/health` endpoint is unauthenticated.
+`MCP_AUTH_MODE` controls which authentication methods are accepted:
+
+- **`token`** — static `MCP_API_TOKEN` only; uses FastMCP's `DebugTokenVerifier`
+- **`oauth`** — GitHub OAuth only; uses FastMCP's `GitHubProvider`
+- **`both`** (default) — `TokenOrGitHubOAuthProvider` tries static token first (constant-time compare via `hmac.compare_digest`), then falls back to GitHub OAuth
+
+`ALLOWED_GITHUB_LOGINS` (when set) restricts OAuth sign-in to specific GitHub accounts. The `/health` endpoint is unauthenticated.
