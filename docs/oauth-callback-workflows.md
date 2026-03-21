@@ -1,13 +1,87 @@
 # OAuth Callback Workflows
 
-This document shows two callback patterns:
+This document describes the three authentication paths supported by the MCP server and how each client integrates.
 
-1. Power Automate custom connector OAuth flow (Power Automate owns callback)
-2. Native MCP server OAuth flow (server owns callback)
+---
 
-## Workflow 1: Power Automate Owns the Callback URL
+## Token Verification Chain
 
-In this model, GitHub redirects back to Power Automate. The MCP server only receives bearer tokens on tool calls.
+Every incoming request passes through `TokenOrGitHubOAuthProvider.verify_token` in order:
+
+```
+Step 1 — Static bearer token (MCP_API_TOKEN)
+         ↓ fail
+Step 2 — FastMCP proxy token (issued by server's /authorize → /token flow)
+         ↓ fail
+Step 3 — Raw GitHub OAuth token (obtained directly from GitHub)
+         ↓ fail
+         → 401 Unauthorized
+```
+
+`ALLOWED_GITHUB_LOGINS` is enforced on Steps 2 and 3 (OAuth paths).
+
+---
+
+## Client → Workflow Mapping
+
+| Client | Auth method | Token type | Workflow |
+|---|---|---|---|
+| Lobehub / automation | Static `MCP_API_TOKEN` | Static bearer | Step 1 |
+| VS Code Copilot | GitHub OAuth via server proxy | FastMCP proxy token | Step 2 |
+| Power Automate / Copilot Studio | GitHub OAuth direct (custom connector) | Raw GitHub token | Step 3 |
+
+---
+
+## Workflow 1: Static Token (Lobehub, automation)
+
+```
+Client → POST /mcp with Authorization: Bearer <MCP_API_TOKEN>
+MCP Server → hmac.compare_digest → match → 200 OK
+```
+
+No GitHub interaction. Fastest path.
+
+---
+
+## Workflow 2: Native MCP Server OAuth (VS Code)
+
+The MCP server acts as an OAuth proxy. VS Code registers via CIMD/DCR and obtains a FastMCP-issued token.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as VS Code
+    participant MCP as MCP Server (OAuth Proxy)
+    participant GH as GitHub OAuth
+
+    C->>MCP: Discover OAuth metadata (/.well-known/oauth-authorization-server)
+    C->>MCP: Register client via DCR (/register)
+    MCP-->>C: FastMCP client_id
+    C->>MCP: Authorization request (/authorize)
+    MCP->>GH: Redirect to GitHub authorize
+    GH-->>C: Login + consent prompt
+    C->>GH: Approve scopes
+    GH->>MCP: Redirect to /auth/callback with code
+    MCP->>GH: Exchange code for GitHub token
+    MCP-->>C: FastMCP authorization code
+    C->>MCP: Exchange code for token (/token)
+    MCP-->>C: FastMCP proxy token (JWT)
+    C->>MCP: POST /mcp with Authorization: Bearer <fastmcp_token>
+    MCP->>MCP: verify_token Step 2 → valid
+    MCP-->>C: MCP response
+```
+
+### Callback URL used
+
+```
+https://your-domain/auth/callback
+```
+
+---
+
+## Workflow 3: Power Automate Direct GitHub OAuth (Copilot Studio)
+
+Power Automate owns the OAuth flow. It obtains a raw GitHub token directly from GitHub and sends it to the MCP server. The server validates it via GitHub's API (Step 3 fallback).
 
 ```mermaid
 sequenceDiagram
@@ -17,64 +91,64 @@ sequenceDiagram
     participant GH as GitHub OAuth
     participant MCP as MCP Server
 
-    U->>PA: Create/authorize connector connection
-    PA->>GH: Redirect user to GitHub authorize endpoint
+    U->>PA: Create connector connection
+    PA->>GH: Redirect to https://github.com/login/oauth/authorize
     GH-->>U: Login + consent prompt
-    U->>GH: Approve requested scopes
+    U->>GH: Approve scopes (read:user)
     GH->>PA: Redirect to Power Automate callback URL with code
-    PA->>GH: Exchange code for access token
-    GH-->>PA: Access token
-    PA->>MCP: MCP request with Authorization: Bearer <github_token>
-    MCP->>GH: Verify token (GitHub API)
-    GH-->>MCP: Token valid + user claims
+    PA->>GH: POST https://github.com/login/oauth/access_token with code
+    GH-->>PA: Raw GitHub OAuth token
+    PA->>MCP: POST /mcp with Authorization: Bearer <github_token>
+    MCP->>GH: GET https://api.github.com/user (verify token)
+    GH-->>MCP: 200 OK + user claims (login, id, etc.)
+    MCP->>GH: GET https://api.github.com/user/repos (verify scopes)
+    GH-->>MCP: X-OAuth-Scopes header
+    MCP->>MCP: Check ALLOWED_GITHUB_LOGINS
     MCP-->>PA: MCP response
 ```
 
 ### Callback URL used
 
-- Power Automate generated Redirect URL (from connector Security tab after Save/Update)
-
-### Notes
-
-- GitHub callback never returns to MCP server in this flow.
-- MCP server still validates incoming GitHub bearer token.
-
-## Workflow 2: Native MCP Server OAuth Callback
-
-In this model, the MCP server hosts OAuth routes and receives callback directly.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant C as MCP Client
-    participant MCP as MCP Server (OAuth Provider)
-    participant GH as GitHub OAuth
-
-    C->>MCP: Start OAuth authorization
-    MCP->>GH: Redirect to GitHub authorize endpoint
-    GH-->>C: Login + consent prompt
-    C->>GH: Approve requested scopes
-    GH->>MCP: Redirect to /auth/callback with code
-    MCP->>GH: Exchange code for access token
-    GH-->>MCP: Access token
-    MCP->>GH: Verify token and fetch user claims
-    GH-->>MCP: Valid token + user info
-    MCP-->>C: Authorized session/token for MCP calls
-    C->>MCP: MCP request with bearer token
-    MCP-->>C: MCP response
+```
+https://global.consent.azure-apim.net/redirect/<connector-id>
 ```
 
-### Callback URL used
+Generated by Power Automate — get it from the connector Security tab after first save. Must be registered in your GitHub App's callback URLs.
 
-- https://your-domain/auth/callback
+### Swagger security definition
 
-### Notes
+```yaml
+securityDefinitions:
+  oauth2-auth:
+    type: oauth2
+    flow: accessCode
+    authorizationUrl: https://github.com/login/oauth/authorize
+    tokenUrl: https://github.com/login/oauth/access_token
+    scopes:
+      read:user: read:user
+```
 
-- The MCP server owns authorization and callback handling in this flow.
-- Use this when clients authenticate directly against MCP OAuth endpoints.
+---
 
-## Choosing Between the Two
+## Using Both Workflows Simultaneously
 
-- Use Power Automate callback flow when Power Automate custom connector is the primary integration.
-- Use native MCP callback flow when your clients authenticate directly with MCP OAuth endpoints.
-- If both are needed simultaneously, create separate GitHub OAuth apps (one callback URL each).
+A single GitHub App handles all OAuth clients. No separate apps needed.
+
+Register all callback URLs in the same GitHub App:
+
+```
+https://your-domain/auth/callback                              ← VS Code (Workflow 2)
+https://global.consent.azure-apim.net/redirect/<connector-id> ← Power Automate (Workflow 3)
+```
+
+GitHub Apps support up to 10 callback URLs.
+
+Server env vars needed for both OAuth workflows:
+
+```env
+MCP_AUTH_MODE=both
+GITHUB_CLIENT_ID=your_github_app_client_id
+GITHUB_CLIENT_SECRET=your_github_app_client_secret
+BASE_URL=https://your-domain
+ALLOWED_GITHUB_LOGINS=your-github-username
+```

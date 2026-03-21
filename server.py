@@ -17,7 +17,7 @@ from fastmcp import FastMCP
 from fastmcp.server.auth import AccessToken
 from fastmcp.server.auth.cimd import CIMDClientManager
 from fastmcp.server.auth.providers.debug import DebugTokenVerifier
-from fastmcp.server.auth.providers.github import GitHubProvider
+from fastmcp.server.auth.providers.github import GitHubProvider, GitHubTokenVerifier
 from fastmcp.server.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -201,7 +201,21 @@ class TokenOrGitHubOAuthProvider(GitHubProvider):
                 claims={"auth_mode": "static_token"},
             )
 
+        # Step 2: Try FastMCP proxy token (VS Code, Copilot Studio via server proxy)
         access_token = await super().verify_token(token)
+
+        # Step 3: Fallback — try raw GitHub OAuth token (e.g. Power Automate custom connector
+        # obtaining a token directly from GitHub rather than through the server's proxy).
+        # Uses the same GitHub API validation that FastMCP's GitHubTokenVerifier uses.
+        if access_token is None:
+            raw_verifier = GitHubTokenVerifier(
+                required_scopes=list(self.required_scopes) if self.required_scopes else None,
+            )
+            access_token = await raw_verifier.verify_token(token)
+            if access_token is not None and self._audit_logging_enabled:
+                login = access_token.claims.get("login")
+                log.info(f"AUTH token type=raw_github login={login if isinstance(login, str) else 'unknown'}")
+
         if access_token is None:
             if self._audit_logging_enabled:
                 log.warning("AUTH failed method=oauth_or_token reason=invalid_or_expired")
