@@ -40,6 +40,8 @@ ruff format .
 | `GITHUB_OAUTH_SCOPES` | No (default: `read:user`) | Comma-separated OAuth scopes |
 | `ALLOWED_GITHUB_LOGINS` | No | Comma-separated GitHub logins allowed via OAuth; empty = all users |
 | `MCP_AUTH_AUDIT_LOG` | No (default: `true`) | Log auth decisions (never logs token values) |
+| `UPSTASH_REDIS_REST_URL` | No (pair with TOKEN) | Upstash REST URL, e.g. `https://host.upstash.io` — enables stateful sessions; both vars required |
+| `UPSTASH_REDIS_REST_TOKEN` | No (pair with URL) | Upstash REST token — enables stateful sessions; both vars required |
 | `HOST` | No (default: `0.0.0.0`) | Bind address |
 | `PORT` | No (default: `8000`) | Bind port |
 

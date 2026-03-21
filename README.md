@@ -326,6 +326,11 @@ Required for Scenarios 2, 3, and 4. GitHub Apps support **up to 10 callback URLs
 | `BASE_URL` | Conditional | — | Public HTTPS URL of this server, e.g. `https://your-domain`. Required when OAuth is enabled (used for OAuth metadata and callbacks). |
 | `GITHUB_OAUTH_SCOPES` | No | `user` | Scopes requested during GitHub OAuth. `user` is sufficient for identity verification. Child scopes like `read:user` are automatically normalised to their parent (`user`) at startup, so both values behave identically. |
 | `ALLOWED_GITHUB_LOGINS` | **Strongly recommended** | *(empty = allow all)* | Comma-separated GitHub usernames permitted for OAuth. **Empty means any GitHub account can sign in.** |
+| `UPSTASH_REDIS_REST_URL` | No (pair with TOKEN) | *(empty = stateless)* | Upstash REST URL from the Upstash console (e.g. `https://host.upstash.io`). When both Upstash vars are set, the server runs in stateful mode — sessions survive restarts. When omitted, runs in stateless mode. |
+| `UPSTASH_REDIS_REST_TOKEN` | No (pair with URL) | *(empty = stateless)* | Upstash REST token from the Upstash console. Must be set together with `UPSTASH_REDIS_REST_URL`. |
+
+> **Note — VS Code `Failed to parse message: ""` warning**
+> When `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are set, the server configures an `EventStore` (FastMCP's built-in Redis-backed event store). The MCP Python SDK then sends an empty SSE priming frame (`data: ""`) on every `GET /mcp` connection to support client reconnection. VS Code's MCP client logs `Failed to parse message: ""` when it receives this frame. This warning is **harmless** — tools are discovered and OAuth works normally. It is triggered by the `EventStore`, not by stateful/stateless mode itself. A fix requires VS Code to silently skip empty SSE frames before JSON parsing.
 | `HOST` | No | `0.0.0.0` | Network interface to bind to |
 | `PORT` | No | `8000` | Port to listen on |
 
