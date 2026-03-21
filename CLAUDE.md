@@ -55,6 +55,11 @@ server.py                    ← FastMCP entry point; all 14 MCP tool definition
 src/
 ├── github_client.py         ← Async REST + GraphQL client (httpx); the only place that calls GitHub API
 ├── cache.py                 ← Two shared TTLCache instances: tree_cache (5 min), file_cache (2 min)
+├── auth/
+│   ├── __init__.py          ← Exports setup_auth(), parse_bool()
+│   ├── provider.py          ← setup_auth(): reads env vars, validates, returns configured provider
+│   ├── oauth.py             ← RFC 8252 CIMD, scope normalization, TokenOrGitHubOAuthProvider
+│   └── token.py             ← build_token_verifier() factory (DebugTokenVerifier + hmac)
 └── tools/
     ├── file_ops.py          ← read_file, list_directory, find_files
     ├── code_search.py       ← search_code, get_file_summary
