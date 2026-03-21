@@ -215,7 +215,7 @@ ALLOWED_GITHUB_LOGINS=your-github-username
 docker compose up -d
 ```
 
-**Step 4 — Set up the Power Automate custom connector** (see [Copilot Studio Integration — OAuth](#option-b-github-oauth-via-power-automate))
+**Step 4 — Connect Copilot Studio** (see [Copilot Studio Integration — OAuth](#option-b-github-oauth-via-power-automate))
 
 ---
 
@@ -491,59 +491,56 @@ Read the file src/auth.py in owner/repo
 
 ## Copilot Studio Integration
 
-### Option A: Static Token (simple) {#option-a-static-token-simple}
+> **Recommended testing order:** Start with Option A (static token) to confirm the MCP tools work end-to-end in your agent. Switch to Option B (OAuth) once that is verified.
+
+### Option A: Static Token {#option-a-static-token-simple}
+
+The server must be running with `MCP_AUTH_MODE=token` or `MCP_AUTH_MODE=both` and `MCP_API_TOKEN` set.
 
 1. In [Copilot Studio](https://copilotstudio.microsoft.com), open your agent
 2. Go to **Actions → Add an action → Model Context Protocol**
 3. Set **Server URL** to `https://your-domain/mcp`
-4. Add header: `Authorization: Bearer your_secret_mcp_token_here`
-5. Select the tools you want to expose and save
+4. Under **Authentication**, choose **API Key** or **Bearer token** and enter your `MCP_API_TOKEN` value
+5. Copilot Studio will discover all 14 tools automatically — select the ones you want to expose
+6. Save and publish
 
-### Option B: GitHub OAuth via Power Automate {#option-b-github-oauth-via-power-automate}
+Test by asking a question in your agent that requires a tool, e.g.:
+```
+What is the folder structure of owner/repo?
+```
 
-This is recommended for production — users sign in with GitHub and only allowed accounts can proceed.
+### Option B: GitHub OAuth (native MCP) {#option-b-github-oauth-via-power-automate}
 
-Complete [Scenario 3](#scenario-3--remote-server-copilot-studio-with-github-oauth) server setup first, then:
+Copilot Studio's native MCP action supports OAuth discovery. When you add the server URL, Copilot Studio reads the server's `/.well-known/oauth-authorization-server` metadata, registers a client via Dynamic Client Registration (DCR), and handles the sign-in flow — the same way VS Code does.
 
-**Step 1 — Create a Power Automate custom connector**
+The server must be running with `MCP_AUTH_MODE=oauth` or `MCP_AUTH_MODE=both` and all three OAuth env vars set.
 
-1. Go to [Power Automate](https://make.powerautomate.com) → **Custom Connectors → New custom connector → Create from blank**
-2. Name it (e.g. `GitHub MCP`)
-3. On the **General** tab:
-   - **Scheme**: `HTTPS`
-   - **Host**: `your-domain`
-   - **Base URL**: `/`
+> **Important:** Copilot Studio authenticates via **this server's own OAuth proxy** (endpoints at `https://your-domain/authorize` and `https://your-domain/token`) — **not** directly against `github.com`. The server proxies the sign-in to GitHub on behalf of the client. Do not configure Power Automate or Copilot Studio to point at GitHub's OAuth endpoints directly — that would produce a raw GitHub token which this server cannot accept (it expects the FastMCP JWT issued by its own token endpoint).
 
-**Step 2 — Configure Security tab**
+**Step 1 — Add the MCP server**
 
-1. **Authentication type**: `OAuth 2.0`
-2. **Identity Provider**: `Generic OAuth 2`
-3. Fill in:
-   - **Authorization URL**: `https://github.com/login/oauth/authorize`
-   - **Token URL**: `https://github.com/login/oauth/access_token`
-   - **Client ID**: your GitHub App client ID
-   - **Client Secret**: your GitHub App client secret
-   - **Scope**: `user`
-4. Click **Update connector**
-5. Power Automate generates a **Redirect URL** — copy it
-6. Go to your [GitHub App settings](https://github.com/settings/apps) and add that Redirect URL as an additional **Callback URL**
+1. In Copilot Studio → **Actions → Add an action → Model Context Protocol**
+2. Set **Server URL** to `https://your-domain/mcp`
+3. Copilot Studio detects that OAuth is required and begins the discovery flow
 
-**Step 3 — Test the connection**
+**Step 2 — Sign in**
 
-1. In Power Automate → **Test → New connection**
-2. Sign in with your GitHub account
-3. Only accounts in `ALLOWED_GITHUB_LOGINS` will be permitted — others receive a `401`
+1. Copilot Studio redirects to your GitHub App's sign-in page
+2. Authorise the app
+3. Only accounts listed in `ALLOWED_GITHUB_LOGINS` will be permitted
 
-**Step 4 — Add to a Copilot Studio agent**
+**Step 3 — Select tools and save**
 
-1. In Copilot Studio → **Actions → Add an action → Power Automate flow**
-2. Create a flow that calls your connector with the desired MCP tool
-3. Map the flow inputs/outputs to your agent's topics
+Select the tools you want to expose in your agent and save.
+
+**Step 4 — Add the Power Automate callback URL to your GitHub App**
+
+Copilot Studio generates a redirect URL during registration. Copy it and add it as an additional **Callback URL** in your [GitHub App settings](https://github.com/settings/apps).
 
 ### Example prompts for Copilot Studio agents
 
 ```
-What files are in the src/ directory of owner/repo?
+What is the folder structure of owner/repo?
 Find all Python files in owner/repo
 Show me recent commits in owner/repo
 Summarise what the file src/main.py does in owner/repo
