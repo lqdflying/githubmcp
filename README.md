@@ -318,7 +318,7 @@ Required for Scenarios 2, 3, and 4. GitHub Apps support **up to 10 callback URLs
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GITHUB_PAT` | **Yes** | — | GitHub PAT used for all GitHub API calls. Server exits on startup if missing or invalid. |
-| `MCP_AUTH_MODE` | No | `both` | `token` — static token only; `oauth` — GitHub OAuth only; `both` — either method accepted |
+| `MCP_AUTH_MODE` | No | `both` | `token` — static token only; `oauth` — GitHub OAuth only; `both` — either method accepted. **Note: `both` requires all three OAuth vars (`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `BASE_URL`) to be set — if you only want token auth, use `token` instead.** |
 | `MCP_AUTH_AUDIT_LOG` | No | `true` | Log auth decisions (method, login, allowlist result). Never logs token values. |
 | `MCP_API_TOKEN` | Conditional | — | Required when `MCP_AUTH_MODE=token` or `both`. The shared secret clients send as a Bearer token. |
 | `GITHUB_CLIENT_ID` | Conditional | — | GitHub App client ID. Required when OAuth is enabled. |
