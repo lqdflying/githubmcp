@@ -24,7 +24,7 @@ An MCP (Model Context Protocol) server built with **FastMCP** that gives AI agen
 
 ---
 
-## Features (26 MCP Tools)
+## Features (29 MCP Tools)
 
 ### Read Tools (always available)
 
@@ -61,6 +61,16 @@ An MCP (Model Context Protocol) server built with **FastMCP** that gives AI agen
 | 24 | `list_workflow_runs` | List recent CI/CD workflow runs with status |
 | 25 | `get_workflow_run_logs` | Download and show logs for a run, highlighting failed steps |
 | 26 | `trigger_workflow` | Trigger a `workflow_dispatch` event to run a CI workflow |
+
+### Task Tracking Tools (always available)
+
+| # | Tool | What it does |
+|---|------|-------------|
+| 27 | `todo_write` | Initialise or replace the in-session task list |
+| 28 | `todo_update` | Mark a single task as `pending`, `in_progress`, or `completed` by index |
+| 29 | `todo_read` | Read the current task list and completion progress |
+
+These tools give the AI agent an in-process task list so it can track multi-step work, check off completed steps one by one, and show progress throughout a long session. State is in-memory and resets on server restart.
 
 ---
 
@@ -121,6 +131,51 @@ In owner/repo:
 ```
 In owner/repo, the latest CI run on branch feature/x failed.
 Show me which step failed and the relevant log output so I can fix it.
+```
+
+### Task tracking
+
+The todo tools let the agent maintain a visible checklist throughout a long session — steps get checked off one by one as work progresses.
+
+**Example: track progress on a multi-file refactor**
+
+```
+In owner/repo, refactor the authentication module:
+- Split src/auth.py into separate files for token, oauth, and middleware
+- Update all imports across the codebase
+- Make sure tests still pass after each change
+Use the todo list to track each step so I can follow your progress.
+```
+
+The agent will initialise a task list at the start, mark each step `in_progress` before working on it, and check it off (`completed`) when done:
+
+```
+Tasks (0/4 completed):
+  ◉ Read current auth.py and plan the split  [in_progress]
+  ○ Create token.py, oauth.py, middleware.py  [pending]
+  ○ Update imports across codebase            [pending]
+  ○ Verify tests pass                         [pending]
+```
+
+**Example: batch issue triage**
+
+```
+In owner/repo, go through the 5 oldest open issues and for each one:
+- Read the issue description
+- Find the relevant code
+- Leave a comment with a diagnosis and suggested fix
+Track each issue as a todo item so I can see which ones are done.
+```
+
+**Example: multi-repo setup**
+
+```
+Set up the same CI pipeline in these three repos: org/api, org/frontend, org/workers.
+For each repo:
+1. Create a branch ci/standardise
+2. Push the shared .github/workflows/ci.yml
+3. Open a PR to main
+Use a todo list with one item per repo so I can track progress.
 ```
 
 ---
