@@ -20,6 +20,11 @@ from src.auth import setup_auth, parse_bool
 from src.github_client import GitHubClient, GitHubAPIError
 from src.tools import file_ops, code_search, git_ops, repo_info, write_ops, pr_ops
 
+# ── Read-only mode ────────────────────────────────────────────────────
+# When MCP_READ_ONLY=true, all write/PR/CI tools are skipped at registration
+# time. Use this when your GITHUB_PAT only has read permissions.
+_READ_ONLY = parse_bool(os.environ.get("MCP_READ_ONLY", "false"), default=False)
+
 load_dotenv()
 
 logging.basicConfig(
@@ -51,6 +56,21 @@ async def lifespan(server: FastMCP):
         print(f"ERROR: Failed to validate GitHub token: {e}", file=sys.stderr)
         await _github_client.close()
         sys.exit(1)
+
+    if _READ_ONLY:
+        print(
+            "Running in READ-ONLY mode (MCP_READ_ONLY=true): "
+            "write/PR/CI tools are disabled.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "Running in READ+WRITE mode. "
+            "Ensure GITHUB_PAT has write permissions (classic: 'repo'; "
+            "fine-grained: Contents+PR+Actions write). "
+            "Set MCP_READ_ONLY=true to disable write tools.",
+            file=sys.stderr,
+        )
 
     yield
 
@@ -425,12 +445,30 @@ async def get_rate_limit() -> str:
     return "Rate limit info not yet available (no API calls made)."
 
 
+# ── Write permission error helper ────────────────────────────────────
+
+_WRITE_PERM_HINT = (
+    "GitHub API returned 403 (permission denied).\n"
+    "Write tools require additional PAT permissions:\n"
+    "  • Classic token: 'repo' scope\n"
+    "  • Fine-grained token: Contents: Read+Write, Metadata: Read,\n"
+    "    Pull requests: Read+Write, Actions: Read+Write\n"
+    "Or set MCP_READ_ONLY=true to disable write tools entirely."
+)
+
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # WRITE / CODE TOOLS
 # ═══════════════════════════════════════════════════════════════════════
 
+# _write_tool registers an MCP tool only when not in read-only mode.
+# If MCP_READ_ONLY=true, the decorated function is simply not registered
+# and the tool is invisible to MCP clients.
+_write_tool = (lambda fn: fn) if _READ_ONLY else mcp.tool()
 
-@mcp.tool()
+
+@_write_tool
 async def create_branch(
     owner: str,
     repo: str,
@@ -449,7 +487,7 @@ async def create_branch(
     return await write_ops.create_branch(_get_client(), owner, repo, branch, from_ref)
 
 
-@mcp.tool()
+@_write_tool
 async def push_files(
     owner: str,
     repo: str,
@@ -478,7 +516,7 @@ async def push_files(
     return await write_ops.push_files(_get_client(), owner, repo, branch, files, message)
 
 
-@mcp.tool()
+@_write_tool
 async def delete_file(
     owner: str,
     repo: str,
@@ -498,7 +536,7 @@ async def delete_file(
     return await write_ops.delete_file(_get_client(), owner, repo, path, message, branch)
 
 
-@mcp.tool()
+@_write_tool
 async def list_workflow_runs(
     owner: str,
     repo: str,
@@ -524,7 +562,7 @@ async def list_workflow_runs(
     )
 
 
-@mcp.tool()
+@_write_tool
 async def trigger_workflow(
     owner: str,
     repo: str,
@@ -551,7 +589,7 @@ async def trigger_workflow(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool()
+@_write_tool
 async def create_pull_request(
     owner: str,
     repo: str,
@@ -577,7 +615,7 @@ async def create_pull_request(
     )
 
 
-@mcp.tool()
+@_write_tool
 async def list_pull_requests(
     owner: str,
     repo: str,
@@ -599,7 +637,7 @@ async def list_pull_requests(
     return await pr_ops.list_pull_requests(_get_client(), owner, repo, state, head, base, limit)
 
 
-@mcp.tool()
+@_write_tool
 async def get_pull_request(
     owner: str,
     repo: str,
@@ -615,7 +653,7 @@ async def get_pull_request(
     return await pr_ops.get_pull_request(_get_client(), owner, repo, pull_number)
 
 
-@mcp.tool()
+@_write_tool
 async def merge_pull_request(
     owner: str,
     repo: str,
@@ -637,7 +675,7 @@ async def merge_pull_request(
     )
 
 
-@mcp.tool()
+@_write_tool
 async def add_pr_comment(
     owner: str,
     repo: str,
@@ -655,7 +693,7 @@ async def add_pr_comment(
     return await pr_ops.add_pr_comment(_get_client(), owner, repo, pull_number, body)
 
 
-@mcp.tool()
+@_write_tool
 async def create_issue(
     owner: str,
     repo: str,

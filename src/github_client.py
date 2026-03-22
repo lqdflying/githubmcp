@@ -66,7 +66,15 @@ class GitHubClient:
 
     # ── REST helpers ─────────────────────────────────────────────────
 
-    def _raise_for_status(self, response: httpx.Response) -> None:
+    # Write methods use this flag to append a permission hint on 403 errors.
+    _WRITE_PERM_HINT = (
+        " Write operations require additional PAT permissions: "
+        "classic token 'repo' scope, or fine-grained "
+        "Contents: Read+Write, Metadata: Read, Pull requests: Read+Write, "
+        "Actions: Read+Write. Set MCP_READ_ONLY=true if your token is read-only."
+    )
+
+    def _raise_for_status(self, response: httpx.Response, is_write: bool = False) -> None:
         """Raise GitHubAPIError for known error status codes."""
         if response.status_code == 401:
             raise GitHubAPIError(401, "Invalid or expired GitHub token.")
@@ -75,6 +83,8 @@ class GitHubClient:
             body = response.json() if response.content else {}
             if isinstance(body, dict) and "message" in body:
                 msg = body["message"]
+            if is_write:
+                msg += self._WRITE_PERM_HINT
             raise GitHubAPIError(403, msg)
         if response.status_code == 404:
             raise GitHubAPIError(404, "Resource not found.")
@@ -97,25 +107,25 @@ class GitHubClient:
     async def _post(self, path: str, json: dict | None = None) -> dict:
         response = await self._http.post(path, json=json)
         self._update_rate_limit(response)
-        self._raise_for_status(response)
+        self._raise_for_status(response, is_write=True)
         return response.json() if response.content else {}
 
     async def _patch(self, path: str, json: dict | None = None) -> dict:
         response = await self._http.patch(path, json=json)
         self._update_rate_limit(response)
-        self._raise_for_status(response)
+        self._raise_for_status(response, is_write=True)
         return response.json() if response.content else {}
 
     async def _put(self, path: str, json: dict | None = None) -> dict:
         response = await self._http.put(path, json=json)
         self._update_rate_limit(response)
-        self._raise_for_status(response)
+        self._raise_for_status(response, is_write=True)
         return response.json() if response.content else {}
 
     async def _delete(self, path: str, json: dict | None = None) -> dict:
         response = await self._http.request("DELETE", path, json=json)
         self._update_rate_limit(response)
-        self._raise_for_status(response)
+        self._raise_for_status(response, is_write=True)
         return response.json() if response.content else {}
 
     # ── GraphQL helper ───────────────────────────────────────────────

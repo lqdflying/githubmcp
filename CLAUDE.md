@@ -31,7 +31,8 @@ ruff format .
 
 | Variable | Required | Description |
 |---|---|---|
-| `GITHUB_PAT` | Always | GitHub PAT (classic: `repo` scope; fine-grained: `Contents: Read` + `Metadata: Read`) |
+| `GITHUB_PAT` | Always | GitHub PAT. **Read-only tools**: classic `public_repo`/`repo`; fine-grained `Contents: Read` + `Metadata: Read`. **Write tools**: classic `repo`; fine-grained `Contents: Read+Write` + `Metadata: Read` + `Pull requests: Read+Write` + `Actions: Read+Write` |
+| `MCP_READ_ONLY` | No (default: `false`) | `true` = disable all write/PR/CI tools at startup (safe for read-only PATs) |
 | `MCP_AUTH_MODE` | No (default: `both`) | `token` \| `oauth` \| `both` |
 | `MCP_API_TOKEN` | When mode is `token` or `both` | Static bearer token for clients |
 | `GITHUB_CLIENT_ID` | When mode is `oauth` or `both` | GitHub OAuth App client ID |
