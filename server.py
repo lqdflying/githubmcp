@@ -18,7 +18,7 @@ from starlette.responses import JSONResponse
 
 from src.auth import setup_auth, parse_bool
 from src.github_client import GitHubClient, GitHubAPIError
-from src.tools import file_ops, code_search, git_ops, repo_info, write_ops, pr_ops
+from src.tools import file_ops, code_search, git_ops, repo_info, write_ops, pr_ops, todo_ops
 
 # ── Read-only mode ────────────────────────────────────────────────────
 # When MCP_READ_ONLY=true, all write/PR/CI tools are skipped at registration
@@ -734,6 +734,42 @@ async def create_issue(
         labels: Optional list of label names to apply (e.g. ["bug", "help wanted"]).
     """
     return await pr_ops.create_issue(_get_client(), owner, repo, title, body, labels)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TODO TOOLS
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+async def todo_write(todos: list[dict]) -> str:
+    """Update the in-session task list for tracking multi-step work.
+
+    Call this at the start of any complex task (3+ steps) and after each step
+    completes to keep the list current. Only one task should be "in_progress"
+    at a time.
+
+    Args:
+        todos: List of task objects. Each must have:
+               - "content": task description (str)
+               - "status": "pending" | "in_progress" | "completed"
+
+    Example:
+        [{"content": "Create branch", "status": "completed"},
+         {"content": "Push files",    "status": "in_progress"},
+         {"content": "Open PR",       "status": "pending"}]
+    """
+    return todo_ops.todo_write(todos)
+
+
+@mcp.tool()
+async def todo_read() -> str:
+    """Read the current in-session task list.
+
+    Returns a formatted summary showing status of all tasks.
+    Returns a message if the list is empty.
+    """
+    return todo_ops.todo_read()
 
 
 # ── Entry point ──────────────────────────────────────────────────────
