@@ -1,8 +1,18 @@
 """Tests for write_ops tools: create_branch, push_files, delete_file, workflow ops."""
 
+import io
+import zipfile
+
 import pytest
 from unittest.mock import AsyncMock
-from src.tools.write_ops import create_branch, push_files, delete_file, list_workflow_runs, trigger_workflow
+from src.tools.write_ops import (
+    create_branch,
+    push_files,
+    delete_file,
+    list_workflow_runs,
+    trigger_workflow,
+    get_workflow_run_logs,
+)
 
 
 # ── create_branch ─────────────────────────────────────────────────────
@@ -214,3 +224,129 @@ async def test_trigger_workflow_with_inputs(mock_client):
         "owner", "repo", "deploy.yml", "v1.0", {"env": "prod"}
     )
     assert "prod" in result
+
+
+# ── helpers ───────────────────────────────────────────────────────────
+
+
+def _make_zip(files: dict[str, str]) -> bytes:
+    """Create an in-memory zip with the given {path: content} entries."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+# ── get_workflow_run_logs ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_run_logs_failure(mock_client):
+    """Shows failed step logs when a job fails."""
+    mock_client.get_workflow_run_jobs.return_value = {
+        "jobs": [
+            {
+                "name": "test",
+                "conclusion": "failure",
+                "steps": [
+                    {"number": 1, "name": "Set up job", "conclusion": "success"},
+                    {"number": 2, "name": "Run pytest", "conclusion": "failure"},
+                ],
+            }
+        ]
+    }
+    log_content = "2024-01-01T10:00:00.000Z FAILED: assert 1 == 2\n2024-01-01T10:00:01.000Z short test summary info"
+    mock_client.download_workflow_run_logs.return_value = _make_zip(
+        {"test/2_Run pytest.txt": log_content}
+    )
+
+    result = await get_workflow_run_logs(mock_client, "owner", "repo", 123)
+
+    assert "✗" in result
+    assert "Run pytest" in result
+    assert "FAILED: assert 1 == 2" in result
+    assert "short test summary info" in result
+    # Timestamps should be stripped
+    assert "2024-01-01T" not in result
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_run_logs_success(mock_client):
+    """Shows all logs when run is successful."""
+    mock_client.get_workflow_run_jobs.return_value = {
+        "jobs": [
+            {
+                "name": "build",
+                "conclusion": "success",
+                "steps": [
+                    {"number": 1, "name": "Checkout", "conclusion": "success"},
+                    {"number": 2, "name": "Build", "conclusion": "success"},
+                ],
+            }
+        ]
+    }
+    mock_client.download_workflow_run_logs.return_value = _make_zip(
+        {
+            "build/1_Checkout.txt": "Cloning repo...\nDone.",
+            "build/2_Build.txt": "Building...\nSuccess.",
+        }
+    )
+
+    result = await get_workflow_run_logs(mock_client, "owner", "repo", 99)
+
+    assert "✓" in result
+    assert "build" in result
+    assert "Cloning repo" in result
+    assert "Building" in result
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_run_logs_truncation(mock_client):
+    """Truncates output when logs exceed max_chars."""
+    mock_client.get_workflow_run_jobs.return_value = {
+        "jobs": [
+            {
+                "name": "ci",
+                "conclusion": "failure",
+                "steps": [{"number": 1, "name": "Run tests", "conclusion": "failure"}],
+            }
+        ]
+    }
+    big_log = "x" * 50000
+    mock_client.download_workflow_run_logs.return_value = _make_zip(
+        {"ci/1_Run tests.txt": big_log}
+    )
+
+    result = await get_workflow_run_logs(mock_client, "owner", "repo", 1, max_chars=1000)
+
+    assert "truncated to 1,000 chars" in result
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_run_logs_download_error(mock_client):
+    """Returns a friendly message when logs can't be downloaded."""
+    from src.github_client import GitHubAPIError
+
+    mock_client.get_workflow_run_jobs.return_value = {
+        "jobs": [
+            {"name": "ci", "conclusion": "failure", "steps": []}
+        ]
+    }
+    mock_client.download_workflow_run_logs.side_effect = GitHubAPIError(
+        404, "Logs not found. They may have expired."
+    )
+
+    result = await get_workflow_run_logs(mock_client, "owner", "repo", 42)
+
+    assert "Could not download logs" in result
+    assert "expired" in result
+
+
+@pytest.mark.asyncio
+async def test_get_workflow_run_logs_no_jobs(mock_client):
+    mock_client.get_workflow_run_jobs.return_value = {"jobs": []}
+
+    result = await get_workflow_run_logs(mock_client, "owner", "repo", 0)
+
+    assert "No jobs found" in result

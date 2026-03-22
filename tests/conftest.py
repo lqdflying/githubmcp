@@ -54,6 +54,8 @@ def mock_client():
     # Actions / Workflows
     client.list_workflow_runs = AsyncMock()
     client.trigger_workflow = AsyncMock()
+    client.get_workflow_run_jobs = AsyncMock()
+    client.download_workflow_run_logs = AsyncMock()
 
     return client
 

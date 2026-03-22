@@ -563,6 +563,29 @@ async def list_workflow_runs(
 
 
 @_write_tool
+async def get_workflow_run_logs(
+    owner: str,
+    repo: str,
+    run_id: int,
+    max_chars: int = 20000,
+) -> str:
+    """Get the logs for a GitHub Actions workflow run, highlighting failed steps.
+
+    Shows a job/step summary at the top, then the full log content of any
+    failed steps. If all steps passed, shows all logs. Useful for diagnosing
+    why a CI run failed after pushing code.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        run_id: The numeric workflow run ID (from list_workflow_runs).
+        max_chars: Maximum log characters to return (default: 20000).
+                   Increase if you need more context, but be aware of response size.
+    """
+    return await write_ops.get_workflow_run_logs(_get_client(), owner, repo, run_id, max_chars)
+
+
+@_write_tool
 async def trigger_workflow(
     owner: str,
     repo: str,

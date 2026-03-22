@@ -1,6 +1,8 @@
 """Write operations: create branches, commit files, delete files."""
 
 import base64
+import io
+import zipfile
 from typing import Any
 
 from src.github_client import GitHubClient, GitHubAPIError
@@ -150,6 +152,129 @@ async def list_workflow_runs(
         )
 
     return "\n".join(lines)
+
+
+async def get_workflow_run_logs(
+    client: GitHubClient,
+    owner: str,
+    repo: str,
+    run_id: int,
+    max_chars: int = 20000,
+) -> str:
+    """Fetch logs for a workflow run, highlighting failed steps.
+
+    Strategy:
+    1. GET jobs → identify failed jobs / steps
+    2. Download the logs zip
+    3. For each failed job, extract the relevant step log(s)
+    4. Fall back to showing all logs if no failures are detected
+    """
+    # ── Step 1: jobs summary ──────────────────────────────────────────
+    jobs_data = await client.get_workflow_run_jobs(owner, repo, run_id)
+    jobs: list[dict] = jobs_data.get("jobs", [])
+
+    if not jobs:
+        return f"No jobs found for run {run_id}."
+
+    # Build a summary header and collect the names of failed jobs
+    summary_lines = [f"Run #{run_id} — {len(jobs)} job(s):\n"]
+    failed_job_names: set[str] = set()
+    failed_steps_by_job: dict[str, list[str]] = {}
+
+    for job in jobs:
+        conclusion = job.get("conclusion") or job.get("status", "unknown")
+        icon = {"success": "✓", "failure": "✗", "cancelled": "⊘", "skipped": "—"}.get(conclusion, "?")
+        summary_lines.append(f"  {icon} {job['name']}  ({conclusion})")
+
+        if conclusion == "failure":
+            failed_job_names.add(job["name"])
+            failed_steps: list[str] = []
+            for step in job.get("steps", []):
+                step_conclusion = step.get("conclusion") or ""
+                step_icon = {"success": "✓", "failure": "✗", "skipped": "—"}.get(step_conclusion, "?")
+                summary_lines.append(f"      {step_icon} step {step['number']}: {step['name']}  ({step_conclusion})")
+                if step_conclusion == "failure":
+                    failed_steps.append(step["name"])
+            failed_steps_by_job[job["name"]] = failed_steps
+
+    summary = "\n".join(summary_lines)
+
+    # ── Step 2: download logs zip ─────────────────────────────────────
+    try:
+        zip_bytes = await client.download_workflow_run_logs(owner, repo, run_id)
+    except GitHubAPIError as e:
+        return f"{summary}\n\n⚠ Could not download logs: {e}"
+
+    # ── Step 3: extract relevant log content ──────────────────────────
+    target_jobs = failed_job_names if failed_job_names else {j["name"] for j in jobs}
+    target_steps = failed_steps_by_job  # only non-empty when there are failures
+
+    extracted: list[str] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            # Zip entries look like: "{job_name}/1_Set up job.txt"
+            # or "{N}_{job_name}.txt" at the top level for some runners.
+            for name in sorted(zf.namelist()):
+                parts = name.split("/", 1)
+                if len(parts) == 2:
+                    job_folder, step_file = parts
+                else:
+                    job_folder, step_file = "", parts[0]
+
+                # Match by job name substring (GitHub slugifies the name in the path)
+                matched_job = next(
+                    (j for j in target_jobs if _slugify(j) in _slugify(job_folder) or _slugify(job_folder) in _slugify(j)),
+                    None,
+                )
+                if matched_job is None:
+                    continue
+
+                # If we know the specific failed steps, only show those
+                failed_step_names = target_steps.get(matched_job, [])
+                if failed_step_names:
+                    step_match = any(
+                        _slugify(s) in _slugify(step_file) or _slugify(step_file) in _slugify(s)
+                        for s in failed_step_names
+                    )
+                    if not step_match:
+                        continue
+
+                raw = zf.read(name).decode("utf-8", errors="replace")
+                # Strip the leading timestamp on each line (GitHub prepends "2024-01-01T...")
+                lines = [_strip_timestamp(ln) for ln in raw.splitlines()]
+                content = "\n".join(lines).strip()
+                if content:
+                    extracted.append(f"### {name}\n{content}")
+    except zipfile.BadZipFile:
+        return f"{summary}\n\n⚠ Downloaded data is not a valid zip file."
+
+    if not extracted:
+        return f"{summary}\n\n(No matching log entries found in zip.)"
+
+    logs_text = "\n\n".join(extracted)
+
+    # ── Step 4: truncate if needed ────────────────────────────────────
+    truncated = ""
+    if len(logs_text) > max_chars:
+        logs_text = logs_text[:max_chars]
+        truncated = f"\n\n… (truncated to {max_chars:,} chars)"
+
+    header = "FAILED STEP LOGS" if failed_job_names else "LOGS"
+    return f"{summary}\n\n── {header} ──\n\n{logs_text}{truncated}"
+
+
+def _slugify(s: str) -> str:
+    """Lowercase and strip non-alphanumeric for fuzzy name matching."""
+    return "".join(c.lower() if c.isalnum() else "_" for c in s)
+
+
+def _strip_timestamp(line: str) -> str:
+    """Remove the ISO-8601 timestamp GitHub prepends to each log line."""
+    # Format: "2024-01-01T10:00:00.0000000Z <content>"
+    if len(line) > 29 and line[10] == "T" and line[19] in (".", ":") and "Z " in line[:32]:
+        idx = line.index("Z ") + 2
+        return line[idx:]
+    return line
 
 
 async def trigger_workflow(

@@ -416,6 +416,29 @@ class GitHubClient:
         if response.status_code not in (200, 201, 204):
             self._raise_for_status(response)
 
+    async def get_workflow_run_jobs(self, owner: str, repo: str, run_id: int) -> dict:
+        """List jobs and their step-level conclusions for a workflow run."""
+        return await self._get(
+            f"/repos/{owner}/{repo}/actions/runs/{run_id}/jobs",
+            params={"per_page": 100, "filter": "all"},
+        )
+
+    async def download_workflow_run_logs(self, owner: str, repo: str, run_id: int) -> bytes:
+        """Download the logs zip for a workflow run.
+
+        GitHub returns a 302 redirect to a presigned S3 URL; we follow it and
+        return the raw zip bytes. Logs expire after 28 days.
+        """
+        response = await self._http.get(
+            f"/repos/{owner}/{repo}/actions/runs/{run_id}/logs",
+            follow_redirects=True,
+        )
+        self._update_rate_limit(response)
+        if response.status_code == 404:
+            raise GitHubAPIError(404, "Logs not found. They may have expired (28-day limit) or the run has not finished yet.")
+        response.raise_for_status()
+        return response.content
+
     # ── Token validation ─────────────────────────────────────────────
 
     async def validate_token(self) -> dict:
