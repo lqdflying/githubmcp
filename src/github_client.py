@@ -66,9 +66,8 @@ class GitHubClient:
 
     # ── REST helpers ─────────────────────────────────────────────────
 
-    async def _get(self, path: str, params: dict | None = None) -> dict | list:
-        response = await self._http.get(path, params=params)
-        self._update_rate_limit(response)
+    def _raise_for_status(self, response: httpx.Response) -> None:
+        """Raise GitHubAPIError for known error status codes."""
         if response.status_code == 401:
             raise GitHubAPIError(401, "Invalid or expired GitHub token.")
         if response.status_code == 403:
@@ -79,12 +78,45 @@ class GitHubClient:
             raise GitHubAPIError(403, msg)
         if response.status_code == 404:
             raise GitHubAPIError(404, "Resource not found.")
+        if response.status_code == 409:
+            body = response.json() if response.content else {}
+            msg = body.get("message", "Conflict.")
+            raise GitHubAPIError(409, msg)
         if response.status_code == 422:
             body = response.json() if response.content else {}
             msg = body.get("message", "Unprocessable entity")
             raise GitHubAPIError(422, msg)
         response.raise_for_status()
+
+    async def _get(self, path: str, params: dict | None = None) -> dict | list:
+        response = await self._http.get(path, params=params)
+        self._update_rate_limit(response)
+        self._raise_for_status(response)
         return response.json()
+
+    async def _post(self, path: str, json: dict | None = None) -> dict:
+        response = await self._http.post(path, json=json)
+        self._update_rate_limit(response)
+        self._raise_for_status(response)
+        return response.json() if response.content else {}
+
+    async def _patch(self, path: str, json: dict | None = None) -> dict:
+        response = await self._http.patch(path, json=json)
+        self._update_rate_limit(response)
+        self._raise_for_status(response)
+        return response.json() if response.content else {}
+
+    async def _put(self, path: str, json: dict | None = None) -> dict:
+        response = await self._http.put(path, json=json)
+        self._update_rate_limit(response)
+        self._raise_for_status(response)
+        return response.json() if response.content else {}
+
+    async def _delete(self, path: str, json: dict | None = None) -> dict:
+        response = await self._http.request("DELETE", path, json=json)
+        self._update_rate_limit(response)
+        self._raise_for_status(response)
+        return response.json() if response.content else {}
 
     # ── GraphQL helper ───────────────────────────────────────────────
 
@@ -215,6 +247,164 @@ class GitHubClient:
         if not obj or "blame" not in obj:
             raise GitHubAPIError(404, f"Could not get blame for {path} at {ref}")
         return obj["blame"]["ranges"]
+
+    # ── Write: Git Data API ──────────────────────────────────────────
+
+    async def create_ref(self, owner: str, repo: str, ref: str, sha: str) -> dict:
+        """Create a new branch or tag reference. ref must be 'refs/heads/<name>'."""
+        return await self._post(f"/repos/{owner}/{repo}/git/refs", json={"ref": ref, "sha": sha})
+
+    async def update_ref(self, owner: str, repo: str, ref: str, sha: str, force: bool = False) -> dict:
+        """Update a branch reference to point to a new commit SHA."""
+        return await self._patch(f"/repos/{owner}/{repo}/git/refs/{ref}", json={"sha": sha, "force": force})
+
+    async def create_blob(self, owner: str, repo: str, content: str, encoding: str = "utf-8") -> dict:
+        """Create a blob (raw file bytes) object and return its SHA."""
+        return await self._post(f"/repos/{owner}/{repo}/git/blobs", json={"content": content, "encoding": encoding})
+
+    async def create_tree(self, owner: str, repo: str, tree: list[dict], base_tree: str | None = None) -> dict:
+        """Create a tree object from a list of entries. Returns tree SHA."""
+        payload: dict = {"tree": tree}
+        if base_tree:
+            payload["base_tree"] = base_tree
+        return await self._post(f"/repos/{owner}/{repo}/git/trees", json=payload)
+
+    async def create_commit_object(
+        self, owner: str, repo: str, message: str, tree: str, parents: list[str]
+    ) -> dict:
+        """Create a commit object and return its SHA."""
+        return await self._post(
+            f"/repos/{owner}/{repo}/git/commits",
+            json={"message": message, "tree": tree, "parents": parents},
+        )
+
+    # ── Write: Contents API ──────────────────────────────────────────
+
+    async def create_or_update_contents(
+        self,
+        owner: str,
+        repo: str,
+        path: str,
+        message: str,
+        content_b64: str,
+        branch: str,
+        sha: str | None = None,
+    ) -> dict:
+        """Create or update a single file via the Contents API.
+        sha is required when updating an existing file."""
+        payload: dict = {"message": message, "content": content_b64, "branch": branch}
+        if sha:
+            payload["sha"] = sha
+        return await self._put(f"/repos/{owner}/{repo}/contents/{path}", json=payload)
+
+    async def delete_contents(
+        self, owner: str, repo: str, path: str, message: str, sha: str, branch: str
+    ) -> dict:
+        """Delete a file via the Contents API."""
+        return await self._delete(
+            f"/repos/{owner}/{repo}/contents/{path}",
+            json={"message": message, "sha": sha, "branch": branch},
+        )
+
+    # ── Pull Requests ────────────────────────────────────────────────
+
+    async def list_pull_requests(
+        self,
+        owner: str,
+        repo: str,
+        state: str = "open",
+        head: str | None = None,
+        base: str | None = None,
+        per_page: int = 30,
+    ) -> list:
+        params: dict = {"state": state, "per_page": per_page}
+        if head:
+            params["head"] = head
+        if base:
+            params["base"] = base
+        return await self._get(f"/repos/{owner}/{repo}/pulls", params=params)
+
+    async def get_pull_request(self, owner: str, repo: str, pull_number: int) -> dict:
+        return await self._get(f"/repos/{owner}/{repo}/pulls/{pull_number}")
+
+    async def create_pull_request(
+        self,
+        owner: str,
+        repo: str,
+        title: str,
+        head: str,
+        base: str,
+        body: str = "",
+        draft: bool = False,
+    ) -> dict:
+        return await self._post(
+            f"/repos/{owner}/{repo}/pulls",
+            json={"title": title, "head": head, "base": base, "body": body, "draft": draft},
+        )
+
+    async def merge_pull_request(
+        self,
+        owner: str,
+        repo: str,
+        pull_number: int,
+        commit_title: str | None = None,
+        merge_method: str = "merge",
+    ) -> dict:
+        payload: dict = {"merge_method": merge_method}
+        if commit_title:
+            payload["commit_title"] = commit_title
+        return await self._put(f"/repos/{owner}/{repo}/pulls/{pull_number}/merge", json=payload)
+
+    # ── Issues & Comments ────────────────────────────────────────────
+
+    async def create_issue(
+        self, owner: str, repo: str, title: str, body: str = "", labels: list[str] | None = None
+    ) -> dict:
+        payload: dict = {"title": title, "body": body}
+        if labels:
+            payload["labels"] = labels
+        return await self._post(f"/repos/{owner}/{repo}/issues", json=payload)
+
+    async def create_issue_comment(self, owner: str, repo: str, issue_number: int, body: str) -> dict:
+        return await self._post(
+            f"/repos/{owner}/{repo}/issues/{issue_number}/comments", json={"body": body}
+        )
+
+    # ── Actions / Workflows ──────────────────────────────────────────
+
+    async def list_workflow_runs(
+        self,
+        owner: str,
+        repo: str,
+        workflow_id: str | None = None,
+        branch: str | None = None,
+        status: str | None = None,
+        per_page: int = 10,
+    ) -> dict:
+        if workflow_id:
+            path = f"/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs"
+        else:
+            path = f"/repos/{owner}/{repo}/actions/runs"
+        params: dict = {"per_page": per_page}
+        if branch:
+            params["branch"] = branch
+        if status:
+            params["status"] = status
+        return await self._get(path, params=params)
+
+    async def trigger_workflow(
+        self, owner: str, repo: str, workflow_id: str, ref: str, inputs: dict | None = None
+    ) -> None:
+        """Trigger a workflow_dispatch event. Returns nothing on success (204)."""
+        payload: dict = {"ref": ref}
+        if inputs:
+            payload["inputs"] = inputs
+        response = await self._http.post(
+            f"/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches", json=payload
+        )
+        self._update_rate_limit(response)
+        if response.status_code not in (200, 201, 204):
+            self._raise_for_status(response)
 
     # ── Token validation ─────────────────────────────────────────────
 

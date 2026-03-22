@@ -18,7 +18,7 @@ from starlette.responses import JSONResponse
 
 from src.auth import setup_auth, parse_bool
 from src.github_client import GitHubClient, GitHubAPIError
-from src.tools import file_ops, code_search, git_ops, repo_info
+from src.tools import file_ops, code_search, git_ops, repo_info, write_ops, pr_ops
 
 load_dotenv()
 
@@ -72,10 +72,12 @@ _auth = setup_auth()
 # ── Initialize FastMCP server ────────────────────────────────────────
 
 mcp = FastMCP(
-    "GitHub Repo Reader",
+    "GitHub Repo Reader & Code Tools",
     instructions=(
         "Read and explore GitHub repositories: browse files, search code, "
         "view git history, diffs, blame, and repository structure. "
+        "Write code: create branches, commit files, open pull requests, "
+        "manage issues, and trigger CI workflows. "
         "Authenticate with a GitHub Personal Access Token."
     ),
     lifespan=lifespan,
@@ -421,6 +423,256 @@ async def get_rate_limit() -> str:
             f"Resets at: {reset_dt.isoformat()}"
         )
     return "Rate limit info not yet available (no API calls made)."
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# WRITE / CODE TOOLS
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+async def create_branch(
+    owner: str,
+    repo: str,
+    branch: str,
+    from_ref: str | None = None,
+) -> str:
+    """Create a new branch in a GitHub repository.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        branch: Name of the new branch to create (e.g. "feature/my-feature").
+        from_ref: Branch name, tag, or commit SHA to branch off from.
+                  Defaults to the repo's default branch.
+    """
+    return await write_ops.create_branch(_get_client(), owner, repo, branch, from_ref)
+
+
+@mcp.tool()
+async def push_files(
+    owner: str,
+    repo: str,
+    branch: str,
+    files: list[dict],
+    message: str,
+) -> str:
+    """Commit one or more files to a branch in a single atomic commit.
+
+    Use this to create new files, update existing files, or both — all in one commit.
+    This is the primary tool for making code changes.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        branch: Target branch to push to (must already exist; use create_branch first).
+        files: List of file objects, each with:
+               - "path": file path in the repo (e.g. "src/main.py")
+               - "content": full UTF-8 text content of the file
+        message: Commit message.
+
+    Example files:
+        [{"path": "src/app.py", "content": "print('hello')"},
+         {"path": "README.md", "content": "# My Project"}]
+    """
+    return await write_ops.push_files(_get_client(), owner, repo, branch, files, message)
+
+
+@mcp.tool()
+async def delete_file(
+    owner: str,
+    repo: str,
+    path: str,
+    message: str,
+    branch: str,
+) -> str:
+    """Delete a file from a GitHub repository branch.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        path: Path of the file to delete (e.g. "src/old_module.py").
+        message: Commit message for the deletion.
+        branch: Branch to delete the file from.
+    """
+    return await write_ops.delete_file(_get_client(), owner, repo, path, message, branch)
+
+
+@mcp.tool()
+async def list_workflow_runs(
+    owner: str,
+    repo: str,
+    workflow_id: str | None = None,
+    branch: str | None = None,
+    status: str | None = None,
+    limit: int = 10,
+) -> str:
+    """List recent CI/CD workflow runs for a repository.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        workflow_id: Optional workflow filename (e.g. "ci.yml") or numeric ID to filter by.
+        branch: Optional branch name to filter runs by.
+        status: Optional status filter: "queued", "in_progress", "completed",
+                "action_required", "cancelled", "failure", "neutral", "skipped",
+                "stale", "success", "timed_out", "waiting".
+        limit: Maximum number of runs to return (default: 10).
+    """
+    return await write_ops.list_workflow_runs(
+        _get_client(), owner, repo, workflow_id, branch, status, limit
+    )
+
+
+@mcp.tool()
+async def trigger_workflow(
+    owner: str,
+    repo: str,
+    workflow_id: str,
+    ref: str,
+    inputs: dict | None = None,
+) -> str:
+    """Trigger a workflow_dispatch event to run a CI/CD workflow.
+
+    The workflow must have a 'workflow_dispatch' trigger configured in its YAML.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        workflow_id: Workflow filename (e.g. "ci.yml") or numeric ID.
+        ref: Branch or tag name to run the workflow on (e.g. "main").
+        inputs: Optional key/value inputs defined in the workflow's workflow_dispatch config.
+    """
+    return await write_ops.trigger_workflow(_get_client(), owner, repo, workflow_id, ref, inputs)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# PULL REQUEST & ISSUE TOOLS
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@mcp.tool()
+async def create_pull_request(
+    owner: str,
+    repo: str,
+    title: str,
+    head: str,
+    base: str,
+    body: str = "",
+    draft: bool = False,
+) -> str:
+    """Create a new pull request in a GitHub repository.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        title: PR title.
+        head: The branch containing your changes (e.g. "feature/my-feature").
+        base: The branch you want to merge into (e.g. "main").
+        body: Optional PR description (supports Markdown).
+        draft: If True, open as a draft pull request.
+    """
+    return await pr_ops.create_pull_request(
+        _get_client(), owner, repo, title, head, base, body, draft
+    )
+
+
+@mcp.tool()
+async def list_pull_requests(
+    owner: str,
+    repo: str,
+    state: str = "open",
+    head: str | None = None,
+    base: str | None = None,
+    limit: int = 20,
+) -> str:
+    """List pull requests in a GitHub repository.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        state: Filter by state: "open" (default), "closed", or "all".
+        head: Filter by head branch (e.g. "feature/my-feature" or "myorg:feature/my-feature").
+        base: Filter by base branch (e.g. "main").
+        limit: Maximum number of PRs to return (default: 20).
+    """
+    return await pr_ops.list_pull_requests(_get_client(), owner, repo, state, head, base, limit)
+
+
+@mcp.tool()
+async def get_pull_request(
+    owner: str,
+    repo: str,
+    pull_number: int,
+) -> str:
+    """Get details of a specific pull request including status, commits, and file counts.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        pull_number: The pull request number.
+    """
+    return await pr_ops.get_pull_request(_get_client(), owner, repo, pull_number)
+
+
+@mcp.tool()
+async def merge_pull_request(
+    owner: str,
+    repo: str,
+    pull_number: int,
+    commit_title: str | None = None,
+    merge_method: str = "merge",
+) -> str:
+    """Merge a pull request.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        pull_number: The pull request number to merge.
+        commit_title: Optional custom commit title for the merge commit.
+        merge_method: Merge strategy: "merge" (default), "squash", or "rebase".
+    """
+    return await pr_ops.merge_pull_request(
+        _get_client(), owner, repo, pull_number, commit_title, merge_method
+    )
+
+
+@mcp.tool()
+async def add_pr_comment(
+    owner: str,
+    repo: str,
+    pull_number: int,
+    body: str,
+) -> str:
+    """Add a comment to a pull request.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        pull_number: The pull request number to comment on.
+        body: Comment text (supports Markdown).
+    """
+    return await pr_ops.add_pr_comment(_get_client(), owner, repo, pull_number, body)
+
+
+@mcp.tool()
+async def create_issue(
+    owner: str,
+    repo: str,
+    title: str,
+    body: str = "",
+    labels: list[str] | None = None,
+) -> str:
+    """Create a new issue in a GitHub repository.
+
+    Args:
+        owner: Repository owner (user or organization).
+        repo: Repository name.
+        title: Issue title.
+        body: Optional issue body (supports Markdown).
+        labels: Optional list of label names to apply (e.g. ["bug", "help wanted"]).
+    """
+    return await pr_ops.create_issue(_get_client(), owner, repo, title, body, labels)
 
 
 # ── Entry point ──────────────────────────────────────────────────────
