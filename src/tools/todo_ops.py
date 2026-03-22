@@ -1,15 +1,35 @@
-"""Todo tools: todo_write, todo_read.
+"""Todo tools: todo_write, todo_read, todo_update.
 
 In-memory task list for tracking multi-step agent work within a session.
 State is process-local (resets on server restart).
 """
 
-from typing import Literal
-
 _STATUS_ICON = {"pending": "○", "in_progress": "◉", "completed": "✓"}
+_VALID_STATUSES = {"pending", "in_progress", "completed"}
 
 # Module-level singleton — one list per server process
 _todos: list[dict] = []
+
+
+def todo_update(index: int, status: str) -> str:
+    """Update the status of a single todo item by its index (0-based).
+
+    Use this to check off a task as you complete it, without rewriting the
+    whole list. Typical flow:
+      1. Mark current task "in_progress"
+      2. Do the work
+      3. Mark it "completed"
+      4. Mark next task "in_progress"
+    """
+    if not _todos:
+        raise ValueError("Todo list is empty. Call todo_write first.")
+    if index < 0 or index >= len(_todos):
+        raise ValueError(f"Index {index} out of range (list has {len(_todos)} items).")
+    if status not in _VALID_STATUSES:
+        raise ValueError(f"Invalid status '{status}'. Must be one of: {', '.join(sorted(_VALID_STATUSES))}")
+
+    _todos[index]["status"] = status
+    return _format_todos(_todos)
 
 
 def todo_write(todos: list[dict]) -> str:
@@ -24,15 +44,14 @@ def todo_write(todos: list[dict]) -> str:
     global _todos
 
     # Validate
-    valid_statuses = {"pending", "in_progress", "completed"}
     for i, item in enumerate(todos):
         if "content" not in item:
             raise ValueError(f"Todo item {i} missing required field 'content'")
         status = item.get("status", "pending")
-        if status not in valid_statuses:
+        if status not in _VALID_STATUSES:
             raise ValueError(
                 f"Todo item {i} has invalid status '{status}'. "
-                f"Must be one of: {', '.join(sorted(valid_statuses))}"
+                f"Must be one of: {', '.join(sorted(_VALID_STATUSES))}"
             )
 
     _todos = [{"content": t["content"], "status": t.get("status", "pending")} for t in todos]

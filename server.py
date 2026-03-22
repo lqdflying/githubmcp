@@ -763,6 +763,23 @@ async def todo_write(todos: list[dict]) -> str:
 
 
 @mcp.tool()
+async def todo_update(index: int, status: str) -> str:
+    """Update the status of a single todo item by its 0-based index.
+
+    Use this to check off individual tasks as you complete them, without
+    rewriting the full list. Typical pattern per step:
+      1. todo_update(i, "in_progress")  ← start the task
+      2. ... do the work ...
+      3. todo_update(i, "completed")    ← check it off
+
+    Args:
+        index: 0-based position of the task in the list.
+        status: New status — "pending", "in_progress", or "completed".
+    """
+    return todo_ops.todo_update(index, status)
+
+
+@mcp.tool()
 async def todo_read() -> str:
     """Read the current in-session task list.
 

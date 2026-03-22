@@ -63,6 +63,42 @@ def test_todo_write_missing_content():
         todo_ops.todo_write([{"status": "pending"}])
 
 
+def test_todo_update_marks_completed():
+    todo_ops.todo_write([
+        {"content": "Task A", "status": "in_progress"},
+        {"content": "Task B", "status": "pending"},
+    ])
+    result = todo_ops.todo_update(0, "completed")
+    assert "✓" in result
+    assert todo_ops._todos[0]["status"] == "completed"
+
+
+def test_todo_update_advances_to_in_progress():
+    todo_ops.todo_write([
+        {"content": "Task A", "status": "completed"},
+        {"content": "Task B", "status": "pending"},
+    ])
+    todo_ops.todo_update(1, "in_progress")
+    assert todo_ops._todos[1]["status"] == "in_progress"
+
+
+def test_todo_update_out_of_range():
+    todo_ops.todo_write([{"content": "Only task", "status": "pending"}])
+    with pytest.raises(ValueError, match="out of range"):
+        todo_ops.todo_update(5, "completed")
+
+
+def test_todo_update_empty_list():
+    with pytest.raises(ValueError, match="empty"):
+        todo_ops.todo_update(0, "completed")
+
+
+def test_todo_update_invalid_status():
+    todo_ops.todo_write([{"content": "Task", "status": "pending"}])
+    with pytest.raises(ValueError, match="Invalid status"):
+        todo_ops.todo_update(0, "done")
+
+
 def test_todo_write_empty_list():
     todo_ops.todo_write([{"content": "something", "status": "pending"}])
     todo_ops.todo_write([])
