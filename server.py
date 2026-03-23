@@ -61,7 +61,8 @@ async def lifespan(server: FastMCP):
 
     if _READ_ONLY:
         print(
-            "Running in READ-ONLY mode (MCP_READ_ONLY=true): write/PR/CI tools are disabled.",
+            "Running in READ-ONLY mode (MCP_READ_ONLY=true): write/CI/todo tools are disabled. "
+            "Read-only PR tools (list, get) remain available.",
             file=sys.stderr,
         )
     else:
@@ -105,10 +106,12 @@ mcp = FastMCP(
     auth=_auth,
 )
 
-# When MCP_READ_ONLY=true, hide all write/pr/ci/todo tools via Visibility transform.
-# Tools are still registered — they're just invisible to MCP clients.
+# When MCP_READ_ONLY=true, hide all tools tagged "write" via Visibility transform.
+# This covers: file writes, CI triggers, PR mutations, and todo writes.
+# Read-only PR tools (list_pull_requests, get_pull_request) keep the "read" tag
+# and are NOT hidden, so they remain available even in read-only mode.
 if _READ_ONLY:
-    mcp.add_transform(Visibility(False, tags={"write", "ci", "pr", "todo"}))
+    mcp.add_transform(Visibility(False, tags={"write"}))
 
 
 # ── Logging middleware ───────────────────────────────────────────────
@@ -464,7 +467,7 @@ _WRITE_PERM_HINT = (
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# WRITE / CODE TOOLS  (hidden via Visibility transform when MCP_READ_ONLY=true)
+# WRITE / CODE TOOLS  (tag="write" → hidden via Visibility when MCP_READ_ONLY=true)
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -536,7 +539,7 @@ async def delete_file(
     return await write_ops.delete_file(_get_client(), owner, repo, path, message, branch)
 
 
-@mcp.tool(tags={"ci"})
+@mcp.tool(tags={"write", "ci"})
 async def list_workflow_runs(
     owner: str,
     repo: str,
@@ -562,7 +565,7 @@ async def list_workflow_runs(
     )
 
 
-@mcp.tool(tags={"ci"})
+@mcp.tool(tags={"write", "ci"})
 async def get_workflow_run_logs(
     owner: str,
     repo: str,
@@ -585,7 +588,7 @@ async def get_workflow_run_logs(
     return await write_ops.get_workflow_run_logs(_get_client(), owner, repo, run_id, max_chars)
 
 
-@mcp.tool(tags={"ci"})
+@mcp.tool(tags={"write", "ci"})
 async def trigger_workflow(
     owner: str,
     repo: str,
@@ -609,10 +612,13 @@ async def trigger_workflow(
 
 # ═══════════════════════════════════════════════════════════════════════
 # PULL REQUEST & ISSUE TOOLS
+# Read-only tools (list, get) are tagged {"read", "pr"} — visible in any mode.
+# Mutating tools (create, merge, comment, issue) are tagged {"write", "pr"} —
+# hidden when MCP_READ_ONLY=true.
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool(tags={"pr"})
+@mcp.tool(tags={"write", "pr"})
 async def create_pull_request(
     owner: str,
     repo: str,
@@ -638,7 +644,7 @@ async def create_pull_request(
     )
 
 
-@mcp.tool(tags={"pr"})
+@mcp.tool(tags={"read", "pr"})
 async def list_pull_requests(
     owner: str,
     repo: str,
@@ -660,7 +666,7 @@ async def list_pull_requests(
     return await pr_ops.list_pull_requests(_get_client(), owner, repo, state, head, base, limit)
 
 
-@mcp.tool(tags={"pr"})
+@mcp.tool(tags={"read", "pr"})
 async def get_pull_request(
     owner: str,
     repo: str,
@@ -676,7 +682,7 @@ async def get_pull_request(
     return await pr_ops.get_pull_request(_get_client(), owner, repo, pull_number)
 
 
-@mcp.tool(tags={"pr"})
+@mcp.tool(tags={"write", "pr"})
 async def merge_pull_request(
     owner: str,
     repo: str,
@@ -698,7 +704,7 @@ async def merge_pull_request(
     )
 
 
-@mcp.tool(tags={"pr"})
+@mcp.tool(tags={"write", "pr"})
 async def add_pr_comment(
     owner: str,
     repo: str,
@@ -716,7 +722,7 @@ async def add_pr_comment(
     return await pr_ops.add_pr_comment(_get_client(), owner, repo, pull_number, body)
 
 
-@mcp.tool(tags={"pr"})
+@mcp.tool(tags={"write", "pr"})
 async def create_issue(
     owner: str,
     repo: str,
@@ -741,7 +747,7 @@ async def create_issue(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool(tags={"todo"})
+@mcp.tool(tags={"write", "todo"})
 async def todo_write(todos: list[dict]) -> str:
     """Update the in-session task list for tracking multi-step work.
 
@@ -762,7 +768,7 @@ async def todo_write(todos: list[dict]) -> str:
     return todo_ops.todo_write(todos)
 
 
-@mcp.tool(tags={"todo"})
+@mcp.tool(tags={"write", "todo"})
 async def todo_update(index: int, status: str) -> str:
     """Update the status of a single todo item by its 0-based index.
 
