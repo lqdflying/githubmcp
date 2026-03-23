@@ -6,7 +6,9 @@ from src.cache import tree_cache
 from src.github_client import GitHubClient, GitHubAPIError
 
 
-async def _get_cached_tree(client: GitHubClient, owner: str, repo: str, ref: str | None) -> list[dict]:
+async def _get_cached_tree(
+    client: GitHubClient, owner: str, repo: str, ref: str | None
+) -> list[dict]:
     cache_key = f"tree:{owner}/{repo}:{ref or 'default'}"
     cached = tree_cache.get(cache_key)
     if cached is not None:
@@ -18,15 +20,44 @@ async def _get_cached_tree(client: GitHubClient, owner: str, repo: str, ref: str
 
 # Map file extensions to language names
 _EXT_LANGUAGES = {
-    ".py": "Python", ".js": "JavaScript", ".ts": "TypeScript", ".tsx": "TypeScript",
-    ".jsx": "JavaScript", ".java": "Java", ".cs": "C#", ".go": "Go", ".rs": "Rust",
-    ".rb": "Ruby", ".php": "PHP", ".c": "C", ".cpp": "C++", ".h": "C/C++ Header",
-    ".swift": "Swift", ".kt": "Kotlin", ".scala": "Scala", ".sh": "Shell",
-    ".bash": "Shell", ".ps1": "PowerShell", ".sql": "SQL", ".html": "HTML",
-    ".css": "CSS", ".scss": "SCSS", ".json": "JSON", ".yaml": "YAML", ".yml": "YAML",
-    ".xml": "XML", ".md": "Markdown", ".toml": "TOML", ".ini": "INI",
-    ".tf": "Terraform", ".bicep": "Bicep", ".r": "R", ".lua": "Lua",
-    ".dart": "Dart", ".vue": "Vue", ".svelte": "Svelte",
+    ".py": "Python",
+    ".js": "JavaScript",
+    ".ts": "TypeScript",
+    ".tsx": "TypeScript",
+    ".jsx": "JavaScript",
+    ".java": "Java",
+    ".cs": "C#",
+    ".go": "Go",
+    ".rs": "Rust",
+    ".rb": "Ruby",
+    ".php": "PHP",
+    ".c": "C",
+    ".cpp": "C++",
+    ".h": "C/C++ Header",
+    ".swift": "Swift",
+    ".kt": "Kotlin",
+    ".scala": "Scala",
+    ".sh": "Shell",
+    ".bash": "Shell",
+    ".ps1": "PowerShell",
+    ".sql": "SQL",
+    ".html": "HTML",
+    ".css": "CSS",
+    ".scss": "SCSS",
+    ".json": "JSON",
+    ".yaml": "YAML",
+    ".yml": "YAML",
+    ".xml": "XML",
+    ".md": "Markdown",
+    ".toml": "TOML",
+    ".ini": "INI",
+    ".tf": "Terraform",
+    ".bicep": "Bicep",
+    ".r": "R",
+    ".lua": "Lua",
+    ".dart": "Dart",
+    ".vue": "Vue",
+    ".svelte": "Svelte",
 }
 
 
@@ -69,7 +100,9 @@ async def search_code(
 
     # For regex or non-default-branch searches, do local search
     if is_regexp or ref:
-        return await _local_search(client, owner, repo, query, is_regexp, include_pattern, ref, max_results)
+        return await _local_search(
+            client, owner, repo, query, is_regexp, include_pattern, ref, max_results
+        )
 
     # Use GitHub Search API for simple text on default branch
     try:
@@ -96,7 +129,9 @@ async def search_code(
 
     except GitHubAPIError:
         # Fall back to local search if GitHub Search API fails
-        return await _local_search(client, owner, repo, query, is_regexp, include_pattern, ref, max_results)
+        return await _local_search(
+            client, owner, repo, query, is_regexp, include_pattern, ref, max_results
+        )
 
 
 async def _local_search(
@@ -211,13 +246,40 @@ def _extract_extension(glob_pattern: str) -> str | None:
 
 
 _BINARY_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg",
-    ".zip", ".gz", ".tar", ".rar", ".7z",
-    ".exe", ".dll", ".so", ".dylib", ".o",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-    ".woff", ".woff2", ".ttf", ".eot",
-    ".mp3", ".mp4", ".avi", ".mov", ".wav",
-    ".pyc", ".class", ".jar",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".ico",
+    ".svg",
+    ".zip",
+    ".gz",
+    ".tar",
+    ".rar",
+    ".7z",
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".o",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".mp3",
+    ".mp4",
+    ".avi",
+    ".mov",
+    ".wav",
+    ".pyc",
+    ".class",
+    ".jar",
     ".lock",
 }
 

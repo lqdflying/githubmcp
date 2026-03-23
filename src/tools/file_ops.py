@@ -6,7 +6,9 @@ from src.cache import tree_cache
 from src.github_client import GitHubClient, GitHubAPIError
 
 
-async def _get_cached_tree(client: GitHubClient, owner: str, repo: str, ref: str | None) -> list[dict]:
+async def _get_cached_tree(
+    client: GitHubClient, owner: str, repo: str, ref: str | None
+) -> list[dict]:
     """Get full repo tree, using cache when available."""
     cache_key = f"tree:{owner}/{repo}:{ref or 'default'}"
     cached = tree_cache.get(cache_key)

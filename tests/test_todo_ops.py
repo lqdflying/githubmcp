@@ -13,11 +13,13 @@ def reset_todos():
 
 
 def test_todo_write_basic():
-    result = todo_ops.todo_write([
-        {"content": "Step one", "status": "completed"},
-        {"content": "Step two", "status": "in_progress"},
-        {"content": "Step three", "status": "pending"},
-    ])
+    result = todo_ops.todo_write(
+        [
+            {"content": "Step one", "status": "completed"},
+            {"content": "Step two", "status": "in_progress"},
+            {"content": "Step three", "status": "pending"},
+        ]
+    )
     assert "1/3 completed" in result
     assert "Step one" in result
     assert "Step two" in result
@@ -43,10 +45,12 @@ def test_todo_read_empty():
 
 
 def test_todo_read_after_write():
-    todo_ops.todo_write([
-        {"content": "Do something", "status": "completed"},
-        {"content": "Do another", "status": "pending"},
-    ])
+    todo_ops.todo_write(
+        [
+            {"content": "Do something", "status": "completed"},
+            {"content": "Do another", "status": "pending"},
+        ]
+    )
     result = todo_ops.todo_read()
     assert "1/2 completed" in result
     assert "Do something" in result
@@ -64,20 +68,24 @@ def test_todo_write_missing_content():
 
 
 def test_todo_update_marks_completed():
-    todo_ops.todo_write([
-        {"content": "Task A", "status": "in_progress"},
-        {"content": "Task B", "status": "pending"},
-    ])
+    todo_ops.todo_write(
+        [
+            {"content": "Task A", "status": "in_progress"},
+            {"content": "Task B", "status": "pending"},
+        ]
+    )
     result = todo_ops.todo_update(0, "completed")
     assert "✓" in result
     assert todo_ops._todos[0]["status"] == "completed"
 
 
 def test_todo_update_advances_to_in_progress():
-    todo_ops.todo_write([
-        {"content": "Task A", "status": "completed"},
-        {"content": "Task B", "status": "pending"},
-    ])
+    todo_ops.todo_write(
+        [
+            {"content": "Task A", "status": "completed"},
+            {"content": "Task B", "status": "pending"},
+        ]
+    )
     todo_ops.todo_update(1, "in_progress")
     assert todo_ops._todos[1]["status"] == "in_progress"
 

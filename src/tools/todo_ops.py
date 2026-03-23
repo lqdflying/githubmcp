@@ -26,7 +26,9 @@ def todo_update(index: int, status: str) -> str:
     if index < 0 or index >= len(_todos):
         raise ValueError(f"Index {index} out of range (list has {len(_todos)} items).")
     if status not in _VALID_STATUSES:
-        raise ValueError(f"Invalid status '{status}'. Must be one of: {', '.join(sorted(_VALID_STATUSES))}")
+        raise ValueError(
+            f"Invalid status '{status}'. Must be one of: {', '.join(sorted(_VALID_STATUSES))}"
+        )
 
     _todos[index]["status"] = status
     return _format_todos(_todos)

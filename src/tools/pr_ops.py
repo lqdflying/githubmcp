@@ -60,7 +60,9 @@ async def get_pull_request(
     """Get details of a specific pull request."""
     pr = await client.get_pull_request(owner, repo, pull_number)
     mergeable = pr.get("mergeable")
-    mergeable_str = {True: "yes", False: "no (conflicts)", None: "unknown"}.get(mergeable, str(mergeable))
+    mergeable_str = {True: "yes", False: "no (conflicts)", None: "unknown"}.get(
+        mergeable, str(mergeable)
+    )
     return (
         f"PR #{pr['number']}: {pr['title']}\n"
         f"State: {pr['state']}{'  [DRAFT]' if pr.get('draft') else ''}\n"
@@ -123,6 +125,5 @@ async def create_issue(
     if issue.get("labels"):
         label_str = f"\nLabels: {', '.join(lb['name'] for lb in issue['labels'])}"
     return (
-        f"Created issue #{issue['number']}: {issue['title']}{label_str}\n"
-        f"URL: {issue['html_url']}"
+        f"Created issue #{issue['number']}: {issue['title']}{label_str}\nURL: {issue['html_url']}"
     )
