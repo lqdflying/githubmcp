@@ -164,7 +164,7 @@ async def health(request: Request) -> JSONResponse:
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool(tags={"read", "file"})
+@mcp.tool(tags={"read", "file"}, annotations={"readOnlyHint": True})
 async def read_file(
     owner: str,
     repo: str,
@@ -186,7 +186,7 @@ async def read_file(
     return await file_ops.read_file(_get_client(), owner, repo, path, ref, start_line, end_line)
 
 
-@mcp.tool(tags={"read", "file"})
+@mcp.tool(tags={"read", "file"}, annotations={"readOnlyHint": True})
 async def list_directory(
     owner: str,
     repo: str,
@@ -204,7 +204,7 @@ async def list_directory(
     return await file_ops.list_directory(_get_client(), owner, repo, path, ref)
 
 
-@mcp.tool(tags={"read", "file"})
+@mcp.tool(tags={"read", "file"}, annotations={"readOnlyHint": True})
 async def find_files(
     owner: str,
     repo: str,
@@ -227,7 +227,7 @@ async def find_files(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool(tags={"read", "search"})
+@mcp.tool(tags={"read", "search"}, annotations={"readOnlyHint": True})
 async def search_code(
     owner: str,
     repo: str,
@@ -256,7 +256,7 @@ async def search_code(
     )
 
 
-@mcp.tool(tags={"read", "search"})
+@mcp.tool(tags={"read", "search"}, annotations={"readOnlyHint": True})
 async def get_file_summary(
     owner: str,
     repo: str,
@@ -281,7 +281,7 @@ async def get_file_summary(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool(tags={"read", "git"})
+@mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True})
 async def list_branches(
     owner: str,
     repo: str,
@@ -295,7 +295,7 @@ async def list_branches(
     return await git_ops.list_branches(_get_client(), owner, repo)
 
 
-@mcp.tool(tags={"read", "git"})
+@mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True})
 async def get_commits(
     owner: str,
     repo: str,
@@ -315,7 +315,7 @@ async def get_commits(
     return await git_ops.get_commits(_get_client(), owner, repo, ref, path, limit)
 
 
-@mcp.tool(tags={"read", "git"})
+@mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True})
 async def get_diff(
     owner: str,
     repo: str,
@@ -333,7 +333,7 @@ async def get_diff(
     return await git_ops.get_diff(_get_client(), owner, repo, base, head)
 
 
-@mcp.tool(tags={"read", "git"})
+@mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True})
 async def get_blame(
     owner: str,
     repo: str,
@@ -353,7 +353,7 @@ async def get_blame(
     return await git_ops.get_blame(_get_client(), owner, repo, path, ref)
 
 
-@mcp.tool(tags={"read", "git"})
+@mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True})
 async def get_file_history(
     owner: str,
     repo: str,
@@ -378,7 +378,7 @@ async def get_file_history(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool(tags={"read", "repo"})
+@mcp.tool(tags={"read", "repo"}, annotations={"readOnlyHint": True})
 async def get_repo_info(
     owner: str,
     repo: str,
@@ -392,7 +392,7 @@ async def get_repo_info(
     return await repo_info.get_repo_info(_get_client(), owner, repo)
 
 
-@mcp.tool(tags={"read", "repo"})
+@mcp.tool(tags={"read", "repo"}, annotations={"readOnlyHint": True})
 async def get_repo_structure(
     owner: str,
     repo: str,
@@ -414,7 +414,7 @@ async def get_repo_structure(
     )
 
 
-@mcp.tool(tags={"read", "repo"})
+@mcp.tool(tags={"read", "repo"}, annotations={"readOnlyHint": True})
 async def get_languages(
     owner: str,
     repo: str,
@@ -433,7 +433,7 @@ async def get_languages(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool(tags={"read", "repo"})
+@mcp.tool(tags={"read", "repo"}, annotations={"readOnlyHint": True})
 async def get_rate_limit() -> str:
     """Check the current GitHub API rate limit status.
 
@@ -471,7 +471,7 @@ _WRITE_PERM_HINT = (
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool(tags={"write"})
+@mcp.tool(tags={"write"}, annotations={"readOnlyHint": False, "destructiveHint": False})
 async def create_branch(
     owner: str,
     repo: str,
@@ -490,7 +490,7 @@ async def create_branch(
     return await write_ops.create_branch(_get_client(), owner, repo, branch, from_ref)
 
 
-@mcp.tool(tags={"write"})
+@mcp.tool(tags={"write"}, annotations={"readOnlyHint": False, "destructiveHint": True})
 async def push_files(
     owner: str,
     repo: str,
@@ -519,7 +519,7 @@ async def push_files(
     return await write_ops.push_files(_get_client(), owner, repo, branch, files, message)
 
 
-@mcp.tool(tags={"write"})
+@mcp.tool(tags={"write"}, annotations={"readOnlyHint": False, "destructiveHint": True})
 async def delete_file(
     owner: str,
     repo: str,
@@ -539,7 +539,7 @@ async def delete_file(
     return await write_ops.delete_file(_get_client(), owner, repo, path, message, branch)
 
 
-@mcp.tool(tags={"write", "ci"})
+@mcp.tool(tags={"write", "ci"}, annotations={"readOnlyHint": False, "destructiveHint": False})
 async def list_workflow_runs(
     owner: str,
     repo: str,
@@ -565,7 +565,7 @@ async def list_workflow_runs(
     )
 
 
-@mcp.tool(tags={"write", "ci"})
+@mcp.tool(tags={"write", "ci"}, annotations={"readOnlyHint": False, "destructiveHint": False})
 async def get_workflow_run_logs(
     owner: str,
     repo: str,
@@ -588,7 +588,7 @@ async def get_workflow_run_logs(
     return await write_ops.get_workflow_run_logs(_get_client(), owner, repo, run_id, max_chars)
 
 
-@mcp.tool(tags={"write", "ci"})
+@mcp.tool(tags={"write", "ci"}, annotations={"readOnlyHint": False, "destructiveHint": True})
 async def trigger_workflow(
     owner: str,
     repo: str,
@@ -618,7 +618,7 @@ async def trigger_workflow(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool(tags={"write", "pr"})
+@mcp.tool(tags={"write", "pr"}, annotations={"readOnlyHint": False, "destructiveHint": False})
 async def create_pull_request(
     owner: str,
     repo: str,
@@ -644,7 +644,7 @@ async def create_pull_request(
     )
 
 
-@mcp.tool(tags={"read", "pr"})
+@mcp.tool(tags={"read", "pr"}, annotations={"readOnlyHint": True})
 async def list_pull_requests(
     owner: str,
     repo: str,
@@ -666,7 +666,7 @@ async def list_pull_requests(
     return await pr_ops.list_pull_requests(_get_client(), owner, repo, state, head, base, limit)
 
 
-@mcp.tool(tags={"read", "pr"})
+@mcp.tool(tags={"read", "pr"}, annotations={"readOnlyHint": True})
 async def get_pull_request(
     owner: str,
     repo: str,
@@ -682,7 +682,7 @@ async def get_pull_request(
     return await pr_ops.get_pull_request(_get_client(), owner, repo, pull_number)
 
 
-@mcp.tool(tags={"write", "pr"})
+@mcp.tool(tags={"write", "pr"}, annotations={"readOnlyHint": False, "destructiveHint": True})
 async def merge_pull_request(
     owner: str,
     repo: str,
@@ -704,7 +704,7 @@ async def merge_pull_request(
     )
 
 
-@mcp.tool(tags={"write", "pr"})
+@mcp.tool(tags={"write", "pr"}, annotations={"readOnlyHint": False, "destructiveHint": False})
 async def add_pr_comment(
     owner: str,
     repo: str,
@@ -722,7 +722,7 @@ async def add_pr_comment(
     return await pr_ops.add_pr_comment(_get_client(), owner, repo, pull_number, body)
 
 
-@mcp.tool(tags={"write", "pr"})
+@mcp.tool(tags={"write", "pr"}, annotations={"readOnlyHint": False, "destructiveHint": False})
 async def create_issue(
     owner: str,
     repo: str,
@@ -747,7 +747,7 @@ async def create_issue(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool(tags={"write", "todo"})
+@mcp.tool(tags={"write", "todo"}, annotations={"readOnlyHint": False, "destructiveHint": True})
 async def todo_write(todos: list[dict]) -> str:
     """Update the in-session task list for tracking multi-step work.
 
@@ -768,7 +768,7 @@ async def todo_write(todos: list[dict]) -> str:
     return todo_ops.todo_write(todos)
 
 
-@mcp.tool(tags={"write", "todo"})
+@mcp.tool(tags={"write", "todo"}, annotations={"readOnlyHint": False, "destructiveHint": False})
 async def todo_update(index: int, status: str) -> str:
     """Update the status of a single todo item by its 0-based index.
 
@@ -785,7 +785,7 @@ async def todo_update(index: int, status: str) -> str:
     return todo_ops.todo_update(index, status)
 
 
-@mcp.tool(tags={"read", "todo"})
+@mcp.tool(tags={"read", "todo"}, annotations={"readOnlyHint": True})
 async def todo_read() -> str:
     """Read the current in-session task list.
 
