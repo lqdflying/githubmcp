@@ -1,12 +1,13 @@
-# GitHub Repo Reader MCP Server
+# GitHub Repo Reader & Code Tools MCP Server
 
-An MCP (Model Context Protocol) server built with **FastMCP** that gives AI agents — such as **VS Code Copilot** and **Copilot Studio** — the ability to read and explore GitHub repositories. The server uses your **GitHub Personal Access Token (PAT)** for all GitHub API calls. MCP clients authenticate using a static bearer token, GitHub OAuth, or both.
+An MCP (Model Context Protocol) server built with **FastMCP** that gives AI agents — such as **VS Code Copilot** and **Copilot Studio** — the ability to read, explore, and **write** GitHub repositories. The server uses your **GitHub Personal Access Token (PAT)** for all GitHub API calls. MCP clients authenticate using a static bearer token, GitHub OAuth, or both.
 
 ---
 
 ## Table of Contents
 
-- [Features](#features-14-mcp-tools)
+- [Features](#features-26-mcp-tools)
+- [Example Prompts](#example-prompts)
 - [How Authentication Works](#how-authentication-works)
 - [Prerequisites](#prerequisites)
 - [Setup Scenarios](#setup-scenarios)
@@ -23,7 +24,9 @@ An MCP (Model Context Protocol) server built with **FastMCP** that gives AI agen
 
 ---
 
-## Features (14 MCP Tools)
+## Features (29 MCP Tools)
+
+### Read Tools (always available)
 
 | # | Tool | What it does |
 |---|------|-------------|
@@ -41,6 +44,139 @@ An MCP (Model Context Protocol) server built with **FastMCP** that gives AI agen
 | 12 | `get_repo_structure` | View the full folder and file tree |
 | 13 | `get_languages` | See the programming language breakdown |
 | 14 | `get_rate_limit` | Check remaining GitHub API quota |
+
+### Write Tools (disabled when `MCP_READ_ONLY=true`)
+
+| # | Tool | What it does |
+|---|------|-------------|
+| 15 | `create_branch` | Create a new branch from any ref or the default branch |
+| 16 | `push_files` | Commit one or more files in a single atomic commit |
+| 17 | `delete_file` | Delete a file from a branch |
+| 18 | `create_pull_request` | Open a new pull request (supports draft) |
+| 19 | `list_pull_requests` | List PRs filtered by state, head branch, or base branch |
+| 20 | `get_pull_request` | Get PR details: status, diff stats, mergeable, description |
+| 21 | `merge_pull_request` | Merge a PR (merge / squash / rebase) |
+| 22 | `add_pr_comment` | Add a comment to a pull request |
+| 23 | `create_issue` | Create a new issue with optional labels |
+| 24 | `list_workflow_runs` | List recent CI/CD workflow runs with status |
+| 25 | `get_workflow_run_logs` | Download and show logs for a run, highlighting failed steps |
+| 26 | `trigger_workflow` | Trigger a `workflow_dispatch` event to run a CI workflow |
+
+### Task Tracking Tools (always available)
+
+| # | Tool | What it does |
+|---|------|-------------|
+| 27 | `todo_write` | Initialise or replace the in-session task list |
+| 28 | `todo_update` | Mark a single task as `pending`, `in_progress`, or `completed` by index |
+| 29 | `todo_read` | Read the current task list and completion progress |
+
+These tools give the AI agent an in-process task list so it can track multi-step work, check off completed steps one by one, and show progress throughout a long session. State is in-memory and resets on server restart.
+
+---
+
+## Example Prompts
+
+### Reading & exploring
+
+```
+What is the folder structure of owner/repo?
+Show me the last 10 commits on the main branch of owner/repo
+Search for all TODO comments in owner/repo
+What languages does owner/repo use?
+Show me the diff between main and develop in owner/repo
+Who last modified line 42 in src/server.py in owner/repo?
+Read the file src/auth.py in owner/repo
+```
+
+### Full AI coding loop
+
+The write tools unlock an end-to-end workflow: read the codebase, make changes, run CI, diagnose failures, and open a PR — without leaving your AI agent.
+
+**Example: fix a bug and open a PR**
+
+```
+In owner/repo:
+1. Read src/auth.py and find the bug in the login function
+2. Create a branch called fix/login-bug
+3. Fix the bug and push the updated file
+4. Check whether CI passes — if it fails, read the logs and fix the issue
+5. Once CI is green, open a pull request to main with a clear description
+```
+
+**Example: add a feature from scratch**
+
+```
+In owner/repo:
+1. Look at the project structure and understand how it's organised
+2. Create a branch called feature/user-profile
+3. Add a new user profile endpoint following the patterns in src/routes/
+4. Push all the new files in one commit
+5. Wait for CI to finish; if there are test failures show me the logs
+6. Open a draft PR titled "Add user profile endpoint"
+```
+
+**Example: set up CI on a repo that has none**
+
+```
+In owner/repo:
+1. Check what language and build tools the project uses
+2. Create a branch called ci/add-github-actions
+3. Write an appropriate .github/workflows/ci.yml based on the project type
+4. Push it, then confirm the workflow appears and triggers correctly
+5. Open a PR to merge it into main
+```
+
+**Example: investigate a failing CI run**
+
+```
+In owner/repo, the latest CI run on branch feature/x failed.
+Show me which step failed and the relevant log output so I can fix it.
+```
+
+### Task tracking
+
+The todo tools let the agent maintain a visible checklist throughout a long session — steps get checked off one by one as work progresses.
+
+**Example: track progress on a multi-file refactor**
+
+```
+In owner/repo, refactor the authentication module:
+- Split src/auth.py into separate files for token, oauth, and middleware
+- Update all imports across the codebase
+- Make sure tests still pass after each change
+Use the todo list to track each step so I can follow your progress.
+```
+
+The agent will initialise a task list at the start, mark each step `in_progress` before working on it, and check it off (`completed`) when done:
+
+```
+Tasks (0/4 completed):
+  ◉ Read current auth.py and plan the split  [in_progress]
+  ○ Create token.py, oauth.py, middleware.py  [pending]
+  ○ Update imports across codebase            [pending]
+  ○ Verify tests pass                         [pending]
+```
+
+**Example: batch issue triage**
+
+```
+In owner/repo, go through the 5 oldest open issues and for each one:
+- Read the issue description
+- Find the relevant code
+- Leave a comment with a diagnosis and suggested fix
+Track each issue as a todo item so I can see which ones are done.
+```
+
+**Example: multi-repo setup**
+
+```
+Set up the same CI pipeline in these three repos: org/api, org/frontend, org/workers.
+For each repo:
+1. Create a branch ci/standardise
+2. Push the shared .github/workflows/ci.yml
+3. Open a PR to main
+Use a todo list with one item per repo so I can track progress.
+```
 
 ---
 
@@ -86,10 +222,12 @@ GitHub API
 - **Python 3.12+** (direct) or **Docker** (containerised)
 - A **GitHub Personal Access Token** — this is what the server uses to call the GitHub API:
 
-  | Token type | Required permissions |
-  |-----------|---------------------|
-  | Classic token | `repo` scope (private + public), or `public_repo` (public only) |
-  | Fine-grained token | `Contents: Read` + `Metadata: Read` |
+  | | Classic token | Fine-grained token |
+  |---|---|---|
+  | **Read tools only** | `public_repo` (public) or `repo` (private) | `Contents: Read` + `Metadata: Read` |
+  | **Read + Write tools** | `repo` | `Contents: Read+Write` + `Metadata: Read` + `Pull requests: Read+Write` + `Actions: Read+Write` |
+
+  Set `MCP_READ_ONLY=true` in your `.env` if your token only has read permissions — this disables all write tools at startup so they are hidden from AI agents entirely.
 
 ### Creating a GitHub PAT
 
@@ -113,15 +251,14 @@ GitHub API
 
 **Permissions** — under *Repository permissions*, set:
 
-| Permission | Access | Notes |
-|------------|--------|-------|
-| **Contents** | Read-only | **Required** — file content, trees, blobs, commits, branches, diffs, blame |
-| **Metadata** | Read-only | **Required** — repo info, language breakdown (auto-selected by GitHub) |
-| Actions | Read-only | Optional — not used by this server |
-| Commit statuses | Read-only | Optional — not used by this server |
-| Pull requests | Read-only | Optional — not used by this server |
+| Permission | Read-only mode | Read+Write mode | Notes |
+|------------|:--------------:|:---------------:|-------|
+| **Contents** | Read | Read+Write | **Required** — files, trees, blobs, commits, branches, diffs, blame |
+| **Metadata** | Read | Read | **Required** — repo info, language breakdown (auto-selected by GitHub) |
+| **Pull requests** | — | Read+Write | Required for `create_pull_request`, `merge_pull_request`, `add_pr_comment`, `list_pull_requests` |
+| **Actions** | — | Read+Write | Required for `list_workflow_runs`, `get_workflow_run_logs`, `trigger_workflow` |
 
-> Only `Contents: Read` and `Metadata: Read` are required. The others can be left at *No access*.
+> For read-only use, only `Contents: Read` and `Metadata: Read` are required. Set `MCP_READ_ONLY=true` to hide write tools from AI agents when using a read-only token.
 
 ---
 
@@ -292,7 +429,7 @@ ALLOWED_GITHUB_LOGINS=your-github-username
 ALLOWED_GITHUB_LOGINS=your-username,colleague-username,bot-account
 ```
 
-All listed accounts receive identical access to all 14 tools. The check is case-insensitive.
+All listed accounts receive identical access to all available tools. The check is case-insensitive.
 
 ### How the allowlist works
 
@@ -352,6 +489,7 @@ Required for Scenarios 2, 3, and 4. GitHub Apps support **up to 10 callback URLs
 | `MCP_STATELESS` | No | `true` | `true` — stateless mode (default, recommended): new transport per request, survives restarts with no stale session issues. `false` — stateful mode: enables SSE event replay via Redis so clients can resume a dropped stream using `Last-Event-ID`; requires both Upstash vars; sessions are in-memory so clients must re-connect after a server restart. |
 | `UPSTASH_REDIS_REST_URL` | When `MCP_STATELESS=false` | — | Upstash REST URL from the Upstash console (e.g. `https://host.upstash.io`). Both Upstash vars must be set together. Ignored when `MCP_STATELESS=true`. |
 | `UPSTASH_REDIS_REST_TOKEN` | When `MCP_STATELESS=false` | — | Upstash REST token from the Upstash console. Both Upstash vars must be set together. Ignored when `MCP_STATELESS=true`. |
+| `MCP_READ_ONLY` | No | `false` | `true` — disable all write/PR/CI tools at startup. Use when `GITHUB_PAT` only has read permissions. Read tools (`read_file`, `search_code`, `get_diff`, etc.) are always available regardless of this setting. |
 | `HOST` | No | `0.0.0.0` | Network interface to bind to |
 | `PORT` | No | `8000` | Port to listen on |
 
@@ -530,7 +668,7 @@ The server must be running with `MCP_AUTH_MODE=token` or `MCP_AUTH_MODE=both` an
 2. Go to **Actions → Add an action → Model Context Protocol**
 3. Set **Server URL** to `https://your-domain/mcp`
 4. Under **Authentication**, choose **API Key** or **Bearer token** and enter your `MCP_API_TOKEN` value
-5. Copilot Studio will discover all 14 tools automatically — select the ones you want to expose
+5. Copilot Studio will discover all available tools automatically — select the ones you want to expose
 6. Save and publish
 
 Test by asking a question in your agent that requires a tool, e.g.:
@@ -724,18 +862,84 @@ get_rate_limit()
 
 ---
 
+### Write & Code Tools
+
+**Create a branch**
+```
+create_branch(owner="owner", repo="repo", branch="feature/my-feature")
+create_branch(owner="owner", repo="repo", branch="hotfix/x", from_ref="v2.1.0")
+```
+
+**Commit files (single or multiple in one commit)**
+```
+push_files(
+    owner="owner", repo="repo", branch="feature/my-feature",
+    files=[
+        {"path": "src/app.py", "content": "print('hello')"},
+        {"path": "tests/test_app.py", "content": "def test_hello(): pass"}
+    ],
+    message="Add app with tests"
+)
+```
+
+**Delete a file**
+```
+delete_file(owner="owner", repo="repo", path="src/old_module.py",
+            message="Remove deprecated module", branch="main")
+```
+
+**Open a pull request**
+```
+create_pull_request(owner="owner", repo="repo", title="Add feature X",
+                    head="feature/my-feature", base="main",
+                    body="Closes #42\n\nAdds the X feature.")
+```
+
+**Check CI status**
+```
+list_workflow_runs(owner="owner", repo="repo", branch="feature/my-feature")
+```
+
+**Read CI failure logs**
+```
+get_workflow_run_logs(owner="owner", repo="repo", run_id=12345678)
+```
+
+**Trigger a workflow manually**
+```
+trigger_workflow(owner="owner", repo="repo", workflow_id="ci.yml", ref="main")
+trigger_workflow(owner="owner", repo="repo", workflow_id="deploy.yml",
+                 ref="main", inputs={"environment": "production"})
+```
+
+**Merge a PR**
+```
+merge_pull_request(owner="owner", repo="repo", pull_number=7, merge_method="squash")
+```
+
+**Create an issue**
+```
+create_issue(owner="owner", repo="repo", title="Bug: login fails",
+             body="Steps to reproduce...", labels=["bug", "priority: high"])
+```
+
+---
+
 ## Architecture
 
 ```
-server.py                    ← FastMCP entry point (Streamable HTTP transport)
+server.py                    ← FastMCP entry point (Streamable HTTP transport); all 26 tools
 src/
 ├── github_client.py         ← Async GitHub REST + GraphQL client (httpx)
 ├── cache.py                 ← In-memory TTL cache (trees: 5 min, files: 2 min)
+├── auth/                    ← Auth providers (token, OAuth, both)
 └── tools/
     ├── file_ops.py          ← read_file, list_directory, find_files
     ├── code_search.py       ← search_code, get_file_summary
     ├── git_ops.py           ← list_branches, get_commits, get_diff, get_blame, get_file_history
-    └── repo_info.py         ← get_repo_info, get_repo_structure, get_languages, get_rate_limit
+    ├── repo_info.py         ← get_repo_info, get_repo_structure, get_languages, get_rate_limit
+    ├── write_ops.py         ← create_branch, push_files, delete_file, workflow tools
+    └── pr_ops.py            ← create/list/get/merge PR, add_pr_comment, create_issue
 tests/
 ├── conftest.py              ← Shared mock_client fixture
 └── test_*.py                ← Unit tests per tool module
@@ -748,7 +952,9 @@ docs/
 
 | Decision | Reason |
 |----------|--------|
-| Read-only — no write tools | Safe to expose to AI agents without risk of data modification |
+| `MCP_READ_ONLY` flag | Lets operators with read-only PATs disable write tools at the registration level — they become invisible to AI agents rather than failing at runtime |
+| Write tools use Git Data API for `push_files` | Blob → tree → commit → update ref allows multiple files in one atomic commit, matching how real editors work |
+| Write 403 errors include permission hints | When a write call fails due to insufficient PAT scope, the error message lists exactly which fine-grained permissions are needed |
 | Server-side PAT for all GitHub calls | Clients never need GitHub permissions themselves; OAuth is identity-only |
 | GitHub App (not OAuth App) for OAuth | GitHub Apps support up to 10 callback URLs — one app covers VS Code, Copilot Studio, and any other client |
 | Scope normalisation at startup | `GITHUB_OAUTH_SCOPES` child scopes (e.g. `read:user`) are mapped to their GitHub parent (`user`) at parse time. GitHub App tokens return only the parent scope (or nothing); requiring the parent directly means both classic OAuth Apps and GitHub Apps pass the same check without any runtime scope expansion logic. |

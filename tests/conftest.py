@@ -30,6 +30,33 @@ def mock_client():
     client.close = AsyncMock()
     client.graphql = AsyncMock()
 
+    # Write: Git Data API
+    client.create_ref = AsyncMock()
+    client.update_ref = AsyncMock()
+    client.create_blob = AsyncMock()
+    client.create_tree = AsyncMock()
+    client.create_commit_object = AsyncMock()
+
+    # Write: Contents API
+    client.create_or_update_contents = AsyncMock()
+    client.delete_contents = AsyncMock()
+
+    # Pull Requests
+    client.list_pull_requests = AsyncMock()
+    client.get_pull_request = AsyncMock()
+    client.create_pull_request = AsyncMock()
+    client.merge_pull_request = AsyncMock()
+
+    # Issues & Comments
+    client.create_issue = AsyncMock()
+    client.create_issue_comment = AsyncMock()
+
+    # Actions / Workflows
+    client.list_workflow_runs = AsyncMock()
+    client.trigger_workflow = AsyncMock()
+    client.get_workflow_run_jobs = AsyncMock()
+    client.download_workflow_run_logs = AsyncMock()
+
     return client
 
 

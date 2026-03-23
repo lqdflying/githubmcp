@@ -36,9 +36,7 @@ async def test_search_code_regex_local(mock_client, sample_tree):
     mock_client.get_full_tree.return_value = sample_tree
     mock_client.get_file_content.return_value = "import os\nimport sys\ndef main():\n    pass\n"
 
-    result = await search_code(
-        mock_client, "owner", "repo", r"import\s+os", is_regexp=True
-    )
+    result = await search_code(mock_client, "owner", "repo", r"import\s+os", is_regexp=True)
     assert "import os" in result or "No results" in result
 
 
@@ -53,9 +51,7 @@ async def test_search_code_with_include_pattern(mock_client):
         ],
     }
 
-    result = await search_code(
-        mock_client, "owner", "repo", "main", include_pattern="*.py"
-    )
+    result = await search_code(mock_client, "owner", "repo", "main", include_pattern="*.py")
     assert "src/main.py" in result
 
 
@@ -63,7 +59,7 @@ async def test_search_code_with_include_pattern(mock_client):
 async def test_get_file_summary(mock_client):
     mock_client.get_file_content.return_value = (
         "#!/usr/bin/env python\n"
-        "\"\"\"Main module.\"\"\"\n"
+        '"""Main module."""\n'
         "\n"
         "import os\n"
         "import sys\n"
