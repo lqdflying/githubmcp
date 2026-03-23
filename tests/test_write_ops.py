@@ -4,7 +4,6 @@ import io
 import zipfile
 
 import pytest
-from unittest.mock import AsyncMock
 from src.tools.write_ops import (
     create_branch,
     push_files,
@@ -21,7 +20,7 @@ from src.tools.write_ops import (
 @pytest.mark.asyncio
 async def test_create_branch_from_default(mock_client):
     mock_client.get_repo.return_value = {"default_branch": "main"}
-    mock_client.get_ref.return_value = {"object": {"sha": "abc1234567890"}}
+    mock_client.get_ref.return_value = {"object": {"sha": "abc1234567890", "type": "commit"}}
     mock_client.create_ref.return_value = {}
 
     result = await create_branch(mock_client, "owner", "repo", "feature/new-feature")
@@ -36,7 +35,7 @@ async def test_create_branch_from_default(mock_client):
 
 @pytest.mark.asyncio
 async def test_create_branch_from_ref(mock_client):
-    mock_client.get_ref.return_value = {"object": {"sha": "deadbeef1234"}}
+    mock_client.get_ref.return_value = {"object": {"sha": "deadbeef1234", "type": "commit"}}
     mock_client.create_ref.return_value = {}
 
     result = await create_branch(mock_client, "owner", "repo", "hotfix/bug", from_ref="main")
@@ -50,6 +49,22 @@ async def test_create_branch_from_ref(mock_client):
 
 
 @pytest.mark.asyncio
+async def test_create_branch_from_annotated_tag(mock_client):
+    # get_ref returns a tag object SHA (annotated tag), not a commit SHA
+    mock_client.get_ref.return_value = {"object": {"sha": "tagobj123", "type": "tag"}}
+    mock_client._get.return_value = {"object": {"sha": "commitabc456"}}
+    mock_client.create_ref.return_value = {}
+
+    result = await create_branch(mock_client, "owner", "repo", "release/v2", from_ref="v2.1.0")
+
+    mock_client._get.assert_called_once_with("/repos/owner/repo/git/tags/tagobj123")
+    mock_client.create_ref.assert_called_once_with(
+        "owner", "repo", "refs/heads/release/v2", "commitabc456"
+    )
+    assert "release/v2" in result
+
+
+@pytest.mark.asyncio
 async def test_create_branch_from_commit_sha(mock_client):
     from src.github_client import GitHubAPIError
 
@@ -58,7 +73,9 @@ async def test_create_branch_from_commit_sha(mock_client):
     mock_client.get_commit.return_value = {"sha": "cafe5678abcd"}
     mock_client.create_ref.return_value = {}
 
-    result = await create_branch(mock_client, "owner", "repo", "fix/from-sha", from_ref="cafe5678abcd")
+    result = await create_branch(
+        mock_client, "owner", "repo", "fix/from-sha", from_ref="cafe5678abcd"
+    )
 
     mock_client.create_ref.assert_called_once_with(
         "owner", "repo", "refs/heads/fix/from-sha", "cafe5678abcd"
@@ -81,9 +98,12 @@ async def test_push_files_single_file(mock_client):
     files = [{"path": "src/app.py", "content": "print('hello')"}]
     result = await push_files(mock_client, "owner", "repo", "main", files, "Add app.py")
 
-    mock_client.create_blob.assert_called_once_with("owner", "repo", "print('hello')", encoding="utf-8")
+    mock_client.create_blob.assert_called_once_with(
+        "owner", "repo", "print('hello')", encoding="utf-8"
+    )
     mock_client.create_tree.assert_called_once_with(
-        "owner", "repo",
+        "owner",
+        "repo",
         [{"path": "src/app.py", "mode": "100644", "type": "blob", "sha": "blob789"}],
         base_tree="basetree456",
     )
@@ -314,9 +334,7 @@ async def test_get_workflow_run_logs_truncation(mock_client):
         ]
     }
     big_log = "x" * 50000
-    mock_client.download_workflow_run_logs.return_value = _make_zip(
-        {"ci/1_Run tests.txt": big_log}
-    )
+    mock_client.download_workflow_run_logs.return_value = _make_zip({"ci/1_Run tests.txt": big_log})
 
     result = await get_workflow_run_logs(mock_client, "owner", "repo", 1, max_chars=1000)
 
@@ -329,9 +347,7 @@ async def test_get_workflow_run_logs_download_error(mock_client):
     from src.github_client import GitHubAPIError
 
     mock_client.get_workflow_run_jobs.return_value = {
-        "jobs": [
-            {"name": "ci", "conclusion": "failure", "steps": []}
-        ]
+        "jobs": [{"name": "ci", "conclusion": "failure", "steps": []}]
     }
     mock_client.download_workflow_run_logs.side_effect = GitHubAPIError(
         404, "Logs not found. They may have expired."

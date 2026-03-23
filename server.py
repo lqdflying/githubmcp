@@ -20,12 +20,13 @@ from src.auth import setup_auth, parse_bool
 from src.github_client import GitHubClient, GitHubAPIError
 from src.tools import file_ops, code_search, git_ops, repo_info, write_ops, pr_ops, todo_ops
 
+load_dotenv()
+
 # ── Read-only mode ────────────────────────────────────────────────────
 # When MCP_READ_ONLY=true, all write/PR/CI tools are skipped at registration
 # time. Use this when your GITHUB_PAT only has read permissions.
+# load_dotenv() must be called first so .env values are available here.
 _READ_ONLY = parse_bool(os.environ.get("MCP_READ_ONLY", "false"), default=False)
-
-load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,8 +60,7 @@ async def lifespan(server: FastMCP):
 
     if _READ_ONLY:
         print(
-            "Running in READ-ONLY mode (MCP_READ_ONLY=true): "
-            "write/PR/CI tools are disabled.",
+            "Running in READ-ONLY mode (MCP_READ_ONLY=true): write/PR/CI tools are disabled.",
             file=sys.stderr,
         )
     else:
@@ -457,7 +457,6 @@ _WRITE_PERM_HINT = (
 )
 
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # WRITE / CODE TOOLS
 # ═══════════════════════════════════════════════════════════════════════
@@ -741,7 +740,7 @@ async def create_issue(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool()
+@_write_tool
 async def todo_write(todos: list[dict]) -> str:
     """Update the in-session task list for tracking multi-step work.
 
@@ -762,7 +761,7 @@ async def todo_write(todos: list[dict]) -> str:
     return todo_ops.todo_write(todos)
 
 
-@mcp.tool()
+@_write_tool
 async def todo_update(index: int, status: str) -> str:
     """Update the status of a single todo item by its 0-based index.
 

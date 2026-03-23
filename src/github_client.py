@@ -90,11 +90,15 @@ class GitHubClient:
             raise GitHubAPIError(404, "Resource not found.")
         if response.status_code == 409:
             body = response.json() if response.content else {}
-            msg = body.get("message", "Conflict.")
+            msg = body.get("message", "Conflict.") if isinstance(body, dict) else "Conflict."
             raise GitHubAPIError(409, msg)
         if response.status_code == 422:
             body = response.json() if response.content else {}
-            msg = body.get("message", "Unprocessable entity")
+            msg = (
+                body.get("message", "Unprocessable entity")
+                if isinstance(body, dict)
+                else "Unprocessable entity"
+            )
             raise GitHubAPIError(422, msg)
         response.raise_for_status()
 
@@ -157,7 +161,9 @@ class GitHubClient:
 
     # ── Contents endpoints ───────────────────────────────────────────
 
-    async def get_contents(self, owner: str, repo: str, path: str = "", ref: str | None = None) -> dict | list:
+    async def get_contents(
+        self, owner: str, repo: str, path: str = "", ref: str | None = None
+    ) -> dict | list:
         params = {}
         if ref:
             params["ref"] = ref
@@ -264,15 +270,25 @@ class GitHubClient:
         """Create a new branch or tag reference. ref must be 'refs/heads/<name>'."""
         return await self._post(f"/repos/{owner}/{repo}/git/refs", json={"ref": ref, "sha": sha})
 
-    async def update_ref(self, owner: str, repo: str, ref: str, sha: str, force: bool = False) -> dict:
+    async def update_ref(
+        self, owner: str, repo: str, ref: str, sha: str, force: bool = False
+    ) -> dict:
         """Update a branch reference to point to a new commit SHA."""
-        return await self._patch(f"/repos/{owner}/{repo}/git/refs/{ref}", json={"sha": sha, "force": force})
+        return await self._patch(
+            f"/repos/{owner}/{repo}/git/refs/{ref}", json={"sha": sha, "force": force}
+        )
 
-    async def create_blob(self, owner: str, repo: str, content: str, encoding: str = "utf-8") -> dict:
+    async def create_blob(
+        self, owner: str, repo: str, content: str, encoding: str = "utf-8"
+    ) -> dict:
         """Create a blob (raw file bytes) object and return its SHA."""
-        return await self._post(f"/repos/{owner}/{repo}/git/blobs", json={"content": content, "encoding": encoding})
+        return await self._post(
+            f"/repos/{owner}/{repo}/git/blobs", json={"content": content, "encoding": encoding}
+        )
 
-    async def create_tree(self, owner: str, repo: str, tree: list[dict], base_tree: str | None = None) -> dict:
+    async def create_tree(
+        self, owner: str, repo: str, tree: list[dict], base_tree: str | None = None
+    ) -> dict:
         """Create a tree object from a list of entries. Returns tree SHA."""
         payload: dict = {"tree": tree}
         if base_tree:
@@ -375,7 +391,9 @@ class GitHubClient:
             payload["labels"] = labels
         return await self._post(f"/repos/{owner}/{repo}/issues", json=payload)
 
-    async def create_issue_comment(self, owner: str, repo: str, issue_number: int, body: str) -> dict:
+    async def create_issue_comment(
+        self, owner: str, repo: str, issue_number: int, body: str
+    ) -> dict:
         return await self._post(
             f"/repos/{owner}/{repo}/issues/{issue_number}/comments", json={"body": body}
         )
@@ -414,7 +432,7 @@ class GitHubClient:
         )
         self._update_rate_limit(response)
         if response.status_code not in (200, 201, 204):
-            self._raise_for_status(response)
+            self._raise_for_status(response, is_write=True)
 
     async def get_workflow_run_jobs(self, owner: str, repo: str, run_id: int) -> dict:
         """List jobs and their step-level conclusions for a workflow run."""
@@ -435,7 +453,10 @@ class GitHubClient:
         )
         self._update_rate_limit(response)
         if response.status_code == 404:
-            raise GitHubAPIError(404, "Logs not found. They may have expired (28-day limit) or the run has not finished yet.")
+            raise GitHubAPIError(
+                404,
+                "Logs not found. They may have expired (28-day limit) or the run has not finished yet.",
+            )
         response.raise_for_status()
         return response.content
 
@@ -447,7 +468,9 @@ class GitHubClient:
 
     # ── File content helper ──────────────────────────────────────────
 
-    async def get_file_content(self, owner: str, repo: str, path: str, ref: str | None = None) -> str:
+    async def get_file_content(
+        self, owner: str, repo: str, path: str, ref: str | None = None
+    ) -> str:
         """Get decoded text content of a file. Falls back to Blobs API for large files."""
         try:
             data = await self.get_contents(owner, repo, path, ref)

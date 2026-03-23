@@ -1,10 +1,10 @@
 """Write operations: create branches, commit files, delete files."""
 
-import base64
 import io
 import zipfile
 from typing import Any
 
+from src.cache import tree_cache
 from src.github_client import GitHubClient, GitHubAPIError
 
 
@@ -24,6 +24,11 @@ async def create_branch(
         try:
             ref_data = await client.get_ref(owner, repo, from_ref)
             sha = ref_data["object"]["sha"]
+            # Annotated tags point to a tag object, not a commit — dereference it.
+            # create_ref requires a commit SHA; passing a tag object SHA yields HTTP 422.
+            if ref_data["object"]["type"] == "tag":
+                tag = await client._get(f"/repos/{owner}/{repo}/git/tags/{sha}")
+                sha = tag["object"]["sha"]
         except GitHubAPIError:
             # Might be a bare commit SHA — validate via get_commit
             commit = await client.get_commit(owner, repo, from_ref)
@@ -83,6 +88,10 @@ async def push_files(
 
     # Advance the branch ref
     await client.update_ref(owner, repo, f"heads/{branch}", new_sha)
+
+    # Invalidate the tree cache so subsequent find_files/search_code calls
+    # see the new commit rather than the pre-push state.
+    tree_cache.invalidate(f"tree:{owner}/{repo}:{branch}")
 
     file_list = "\n".join(f"  • {f['path']}" for f in files)
     return (
@@ -183,7 +192,9 @@ async def get_workflow_run_logs(
 
     for job in jobs:
         conclusion = job.get("conclusion") or job.get("status", "unknown")
-        icon = {"success": "✓", "failure": "✗", "cancelled": "⊘", "skipped": "—"}.get(conclusion, "?")
+        icon = {"success": "✓", "failure": "✗", "cancelled": "⊘", "skipped": "—"}.get(
+            conclusion, "?"
+        )
         summary_lines.append(f"  {icon} {job['name']}  ({conclusion})")
 
         if conclusion == "failure":
@@ -191,8 +202,12 @@ async def get_workflow_run_logs(
             failed_steps: list[str] = []
             for step in job.get("steps", []):
                 step_conclusion = step.get("conclusion") or ""
-                step_icon = {"success": "✓", "failure": "✗", "skipped": "—"}.get(step_conclusion, "?")
-                summary_lines.append(f"      {step_icon} step {step['number']}: {step['name']}  ({step_conclusion})")
+                step_icon = {"success": "✓", "failure": "✗", "skipped": "—"}.get(
+                    step_conclusion, "?"
+                )
+                summary_lines.append(
+                    f"      {step_icon} step {step['number']}: {step['name']}  ({step_conclusion})"
+                )
                 if step_conclusion == "failure":
                     failed_steps.append(step["name"])
             failed_steps_by_job[job["name"]] = failed_steps
@@ -223,7 +238,12 @@ async def get_workflow_run_logs(
 
                 # Match by job name substring (GitHub slugifies the name in the path)
                 matched_job = next(
-                    (j for j in target_jobs if _slugify(j) in _slugify(job_folder) or _slugify(job_folder) in _slugify(j)),
+                    (
+                        j
+                        for j in target_jobs
+                        if _slugify(j) in _slugify(job_folder)
+                        or _slugify(job_folder) in _slugify(j)
+                    ),
                     None,
                 )
                 if matched_job is None:
