@@ -31,7 +31,7 @@ ruff format .
 
 | Variable | Required | Description |
 |---|---|---|
-| `GITHUB_PAT` | Always | GitHub PAT. **Read-only tools**: classic `public_repo`/`repo`; fine-grained `Contents: Read` + `Metadata: Read`. **Write tools**: classic `repo`; fine-grained `Contents: Read+Write` + `Metadata: Read` + `Pull requests: Read+Write` + `Actions: Read+Write` |
+| `GITHUB_PAT` | Always | GitHub PAT. **Read-only tools**: classic `public_repo`/`repo`; fine-grained `Contents: Read` + `Metadata: Read`. **Write tools**: classic `repo`; fine-grained `Contents: Read+Write` + `Metadata: Read` + `Pull requests: Read+Write` + `Actions: Read+Write` + `Issues: Read+Write` + `Workflows: Read+Write` |
 | `MCP_READ_ONLY` | No (default: `false`) | `true` = disable all write/PR/CI tools at startup (safe for read-only PATs) |
 | `MCP_AUTH_MODE` | No (default: `both`) | `token` \| `oauth` \| `both` |
 | `MCP_API_TOKEN` | When mode is `token` or `both` | Static bearer token for clients |
@@ -52,7 +52,7 @@ Copy `.env.example` to `.env` and fill in values before running.
 ## Architecture
 
 ```
-server.py                    ← FastMCP entry point; all 14 MCP tool definitions live here
+server.py                    ← FastMCP entry point; 29 MCP tool definitions (14 read + 15 write/todo)
 src/
 ├── github_client.py         ← Async REST + GraphQL client (httpx); the only place that calls GitHub API
 ├── cache.py                 ← Two shared TTLCache instances: tree_cache (5 min), file_cache (2 min)
@@ -65,7 +65,10 @@ src/
     ├── file_ops.py          ← read_file, list_directory, find_files
     ├── code_search.py       ← search_code, get_file_summary
     ├── git_ops.py           ← list_branches, get_commits, get_diff, get_blame, get_file_history
-    └── repo_info.py         ← get_repo_info, get_repo_structure, get_languages, get_rate_limit
+    ├── repo_info.py         ← get_repo_info, get_repo_structure, get_languages, get_rate_limit
+    ├── write_ops.py         ← create_branch, push_files, delete_file, list_workflow_runs, get_workflow_run_logs, trigger_workflow
+    ├── pr_ops.py            ← create_pull_request, list_pull_requests, get_pull_request, merge_pull_request, add_pr_comment, create_issue
+    └── todo_ops.py          ← todo_write, todo_read, todo_update (in-session task tracking)
 tests/
 ├── conftest.py              ← Shared mock_client fixture (AsyncMock of GitHubClient)
 └── test_*.py                ← Unit tests per tool module
