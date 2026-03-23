@@ -36,10 +36,35 @@ def _normalize_loopback_redirect_uris(redirect_uris: list[str]) -> list[str]:
     return normalized
 
 
+_LOOPBACK_REDIRECT_PATTERNS = ["http://127.0.0.1:*/", "http://localhost:*/"]
+
+
 class _RFC8252CIMDManager(CIMDClientManager):
-    """CIMD manager that normalizes fixed loopback ports to wildcards (RFC 8252)."""
+    """CIMD manager that normalizes fixed loopback ports to wildcards (RFC 8252).
+
+    Also supports pre-registered static client IDs for legacy MCP clients that
+    do not use CIMD dynamic registration (e.g. older VS Code versions).
+    """
+
+    def __init__(self, *, static_client_ids: list[str] | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self._static_client_ids: set[str] = set(static_client_ids or [])
 
     async def get_client(self, client_id_url: str):
+        # Pre-registered static client IDs (legacy clients without CIMD support).
+        if client_id_url in self._static_client_ids:
+            from fastmcp.server.auth.oauth_proxy.models import ProxyDCRClient
+
+            patterns = self.allowed_redirect_uri_patterns or _LOOPBACK_REDIRECT_PATTERNS
+            return ProxyDCRClient(
+                client_id=client_id_url,
+                client_secret=None,
+                redirect_uris=None,
+                scope=self.default_scope,
+                allowed_redirect_uri_patterns=patterns,
+                client_name=client_id_url,
+            )
+
         client = await super().get_client(client_id_url)
         if client is None or client.cimd_document is None:
             return client
@@ -108,6 +133,10 @@ class TokenOrGitHubOAuthProvider(GitHubProvider):
         audit_logging_enabled: bool = False,
         **kwargs,
     ):
+        # Capture client_id before passing to super — used to register it as a
+        # static MCP client ID so legacy VS Code versions (which send the server's
+        # GitHub OAuth App client_id instead of a CIMD URL) can authenticate.
+        github_client_id: str | None = kwargs.get("client_id")
         super().__init__(**kwargs)
         self._mcp_api_token = mcp_api_token
         self._allow_static_token = allow_static_token
@@ -118,12 +147,16 @@ class TokenOrGitHubOAuthProvider(GitHubProvider):
         # 1. Normalizes fixed loopback ports to wildcards (RFC 8252 §7.3)
         # 2. Sets default_scope so CIMD clients that don't declare a scope
         #    (e.g. VS Code) are allowed to request the server's required scopes.
+        # 3. Registers GITHUB_CLIENT_ID as a static client so legacy MCP clients
+        #    (older VS Code) that send it as client_id instead of a CIMD URL work.
         if self._cimd_manager is not None:
             default_scope = " ".join(self.required_scopes) if self.required_scopes else None
+            static_ids = [github_client_id] if github_client_id else None
             self._cimd_manager = _RFC8252CIMDManager(
                 enable_cimd=True,
                 default_scope=default_scope,
                 allowed_redirect_uri_patterns=self._allowed_client_redirect_uris,
+                static_client_ids=static_ids,
             )
 
     async def verify_token(self, token: str) -> AccessToken | None:
