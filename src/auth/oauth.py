@@ -50,6 +50,10 @@ class _RFC8252CIMDManager(CIMDClientManager):
         super().__init__(**kwargs)
         self._static_client_ids: set[str] = set(static_client_ids or [])
 
+    def is_cimd_client_id(self, client_id: str) -> bool:
+        """Return True for static pre-registered IDs in addition to CIMD URLs."""
+        return client_id in self._static_client_ids or super().is_cimd_client_id(client_id)
+
     async def get_client(self, client_id_url: str):
         # Pre-registered static client IDs (legacy clients without CIMD support).
         if client_id_url in self._static_client_ids:
