@@ -9,6 +9,7 @@ import os
 import sys
 
 from fastmcp.server.auth import MultiAuth
+from key_value.aio.stores.memory import MemoryStore
 
 from .oauth import (
     LoginFilteredGitHubProvider,
@@ -107,6 +108,8 @@ def setup_auth():
 
     # ── Build OAuth components ────────────────────────────────────────
     # OAuth 2.1 proxy: full DCR + PKCE + CIMD flow through GitHub OAuth App
+    # Use in-memory storage so OAuth flows work on read-only filesystems
+    # (no persistent home directory needed).  Stateless mode resets on restart.
     github_provider = LoginFilteredGitHubProvider(
         client_id=github_client_id,
         client_secret=github_client_secret,
@@ -114,6 +117,7 @@ def setup_auth():
         required_scopes=github_oauth_scopes,
         allowed_github_logins=allowed_github_logins,
         audit_logging_enabled=audit_logging_enabled,
+        client_storage=MemoryStore(),
     )
 
     # OAuth 2.0 raw token: direct GitHub token validation via API
@@ -136,7 +140,13 @@ def setup_auth():
 
     # MultiAuth tries the server first, then each verifier in order.
     # Order: proxy (GitHubProvider) → static token → raw GitHub token
+    #
+    # required_scopes=[] disables the HTTP-layer scope gate on MultiAuth
+    # itself so that every verifier can enforce its own scopes.  Without
+    # this, MultiAuth inherits ["user"] from GitHubProvider  and rejects
+    # static tokens (which only carry ["read"]) at the middleware level.
     return MultiAuth(
         server=github_provider,
         verifiers=verifiers,
+        required_scopes=[],
     )
