@@ -1,13 +1,20 @@
 """Auth provider setup.
 
 Reads environment variables, validates them, and returns the configured
-FastMCP auth provider (either DebugTokenVerifier or TokenOrGitHubOAuthProvider).
+FastMCP auth provider -- either a static DebugTokenVerifier for token-only
+mode, or a MultiAuth compositor for OAuth/both modes.
 """
 
 import os
 import sys
 
-from .oauth import TokenOrGitHubOAuthProvider, normalize_oauth_scopes
+from fastmcp.server.auth import MultiAuth
+
+from .oauth import (
+    LoginFilteredGitHubProvider,
+    LoginFilteredGitHubTokenVerifier,
+    normalize_oauth_scopes,
+)
 from .token import build_token_verifier
 
 _VALID_AUTH_MODES = {"token", "oauth", "both"}
@@ -30,6 +37,13 @@ def setup_auth():
 
     Exits the process with an error message if required variables are missing
     or configuration is invalid.
+
+    == Auth modes ==
+
+    token  — static MCP_API_TOKEN only (DebugTokenVerifier)
+    oauth  — GitHub OAuth only: MultiAuth with OAuth 2.1 proxy (GitHubProvider)
+             + OAuth 2.0 raw token fallback (GitHubTokenVerifier)
+    both   — all three: static token + OAuth 2.1 proxy + OAuth 2.0 raw
     """
     auth_mode = os.environ.get("MCP_AUTH_MODE", "both").strip().lower()
     if auth_mode not in _VALID_AUTH_MODES:
@@ -84,21 +98,45 @@ def setup_auth():
     )
     allowed_github_logins = set(_split_csv(os.environ.get("ALLOWED_GITHUB_LOGINS", "")))
 
-    # ── Build provider ────────────────────────────────────────────────
-    if need_oauth_auth:
-        return TokenOrGitHubOAuthProvider(
-            mcp_api_token=mcp_api_token if need_token_auth else None,
-            allow_static_token=need_token_auth,
-            allowed_github_logins=allowed_github_logins,
+    # ── Token-only mode ───────────────────────────────────────────────
+    if not need_oauth_auth:
+        return build_token_verifier(
+            mcp_api_token=mcp_api_token,
             audit_logging_enabled=audit_logging_enabled,
-            client_id=github_client_id,
-            client_secret=github_client_secret,
-            base_url=base_url,
-            required_scopes=github_oauth_scopes,
         )
 
-    # Token-only mode
-    return build_token_verifier(
-        mcp_api_token=mcp_api_token,
+    # ── Build OAuth components ────────────────────────────────────────
+    # OAuth 2.1 proxy: full DCR + PKCE + CIMD flow through GitHub OAuth App
+    github_provider = LoginFilteredGitHubProvider(
+        client_id=github_client_id,
+        client_secret=github_client_secret,
+        base_url=base_url,
+        required_scopes=github_oauth_scopes,
+        allowed_github_logins=allowed_github_logins,
         audit_logging_enabled=audit_logging_enabled,
+    )
+
+    # OAuth 2.0 raw token: direct GitHub token validation via API
+    # Supports Power Automate and other clients that have a raw GitHub token
+    raw_token_verifier = LoginFilteredGitHubTokenVerifier(
+        required_scopes=github_oauth_scopes,
+        allowed_github_logins=allowed_github_logins,
+        audit_logging_enabled=audit_logging_enabled,
+    )
+
+    # ── Compose verifiers ─────────────────────────────────────────────
+    verifiers: list = [raw_token_verifier]
+
+    if need_token_auth:
+        static_verifier = build_token_verifier(
+            mcp_api_token=mcp_api_token,
+            audit_logging_enabled=audit_logging_enabled,
+        )
+        verifiers.insert(0, static_verifier)
+
+    # MultiAuth tries the server first, then each verifier in order.
+    # Order: proxy (GitHubProvider) → static token → raw GitHub token
+    return MultiAuth(
+        server=github_provider,
+        verifiers=verifiers,
     )
