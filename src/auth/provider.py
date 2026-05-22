@@ -106,10 +106,23 @@ def setup_auth():
             audit_logging_enabled=audit_logging_enabled,
         )
 
+    # ── OAuth storage backend ─────────────────────────────────────────
+    # GitHubProvider stores OAuth transactions, authorization codes,
+    # client registrations, and refresh token mappings.  By default we
+    # use in-memory storage so deployments without a writable home
+    # directory (containers, serverless) work out of the box.
+    #
+    # Set FASTMCP_HOME to point to a writable directory to switch to
+    # persistent encrypted file storage that survives restarts.
+    fastmcp_home = os.environ.get("FASTMCP_HOME", "").strip()
+    client_storage = None if fastmcp_home else MemoryStore()
+    if fastmcp_home:
+        print(f"OAuth storage: persistent (FASTMCP_HOME={fastmcp_home})", file=sys.stderr)
+    else:
+        print("OAuth storage: in-memory (set FASTMCP_HOME for persistent storage)", file=sys.stderr)
+
     # ── Build OAuth components ────────────────────────────────────────
     # OAuth 2.1 proxy: full DCR + PKCE + CIMD flow through GitHub OAuth App
-    # Use in-memory storage so OAuth flows work on read-only filesystems
-    # (no persistent home directory needed).  Stateless mode resets on restart.
     github_provider = LoginFilteredGitHubProvider(
         client_id=github_client_id,
         client_secret=github_client_secret,
@@ -117,7 +130,7 @@ def setup_auth():
         required_scopes=github_oauth_scopes,
         allowed_github_logins=allowed_github_logins,
         audit_logging_enabled=audit_logging_enabled,
-        client_storage=MemoryStore(),
+        client_storage=client_storage,
     )
 
     # OAuth 2.0 raw token: direct GitHub token validation via API
