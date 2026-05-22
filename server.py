@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware
 from fastmcp.server.transforms import Visibility
 from starlette.requests import Request
@@ -83,6 +84,20 @@ def _get_client() -> GitHubClient:
     if _github_client is None:
         raise RuntimeError("GitHub client not initialized. Server lifespan not started.")
     return _github_client
+
+
+async def _safe(coro):
+    """Await a tool coroutine, translating known domain errors to ToolError.
+
+    When mask_error_details=True, FastMCP converts unhandled exceptions into
+    opaque "Error calling tool" messages.  This helper translates expected
+    GitHubAPIError (404, 401, 403, etc.) into ToolError so the client sees
+    the actionable message while unexpected errors remain masked.
+    """
+    try:
+        return await coro
+    except GitHubAPIError as e:
+        raise ToolError(str(e)) from e
 
 
 # ── Authentication ───────────────────────────────────────────────────
@@ -184,7 +199,7 @@ async def read_file(
         start_line: First line to return (1-based, inclusive). Omit to start from beginning.
         end_line: Last line to return (1-based, inclusive). Omit to read to end.
     """
-    return await file_ops.read_file(_get_client(), owner, repo, path, ref, start_line, end_line)
+    return await _safe(file_ops.read_file(_get_client(), owner, repo, path, ref, start_line, end_line))
 
 
 @mcp.tool(tags={"read", "file"}, annotations={"readOnlyHint": True})
@@ -202,7 +217,7 @@ async def list_directory(
         path: Directory path within the repository. Use "" for root.
         ref: Branch, tag, or commit SHA. Defaults to the repo's default branch.
     """
-    return await file_ops.list_directory(_get_client(), owner, repo, path, ref)
+    return await _safe(file_ops.list_directory(_get_client(), owner, repo, path, ref))
 
 
 @mcp.tool(tags={"read", "file"}, annotations={"readOnlyHint": True})
@@ -220,7 +235,7 @@ async def find_files(
         pattern: Glob pattern to match file paths (e.g. "**/*.py", "src/**/*.ts", "*.md").
         ref: Branch, tag, or commit SHA. Defaults to the repo's default branch.
     """
-    return await file_ops.find_files(_get_client(), owner, repo, pattern, ref)
+    return await _safe(file_ops.find_files(_get_client(), owner, repo, pattern, ref))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -252,9 +267,9 @@ async def search_code(
         ref: Branch, tag, or commit SHA. Defaults to the repo's default branch.
         max_results: Maximum number of matching lines to return (default: 50).
     """
-    return await code_search.search_code(
+    return await _safe(code_search.search_code(
         _get_client(), owner, repo, query, is_regexp, include_pattern, ref, max_results
-    )
+    ))
 
 
 @mcp.tool(tags={"read", "search"}, annotations={"readOnlyHint": True})
@@ -274,7 +289,7 @@ async def get_file_summary(
         ref: Branch, tag, or commit SHA. Defaults to the repo's default branch.
         preview_lines: Number of lines to show as preview (default: 20).
     """
-    return await code_search.get_file_summary(_get_client(), owner, repo, path, ref, preview_lines)
+    return await _safe(code_search.get_file_summary(_get_client(), owner, repo, path, ref, preview_lines))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -293,7 +308,7 @@ async def list_branches(
         owner: Repository owner (user or organization).
         repo: Repository name.
     """
-    return await git_ops.list_branches(_get_client(), owner, repo)
+    return await _safe(git_ops.list_branches(_get_client(), owner, repo))
 
 
 @mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True})
@@ -313,7 +328,7 @@ async def get_commits(
         path: Optional file path to filter commits that touched this file.
         limit: Maximum number of commits to return (default: 20).
     """
-    return await git_ops.get_commits(_get_client(), owner, repo, ref, path, limit)
+    return await _safe(git_ops.get_commits(_get_client(), owner, repo, ref, path, limit))
 
 
 @mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True}, timeout=30)
@@ -331,7 +346,7 @@ async def get_diff(
         base: Base ref (branch, tag, or commit SHA) for comparison.
         head: Head ref (branch, tag, or commit SHA) for comparison.
     """
-    return await git_ops.get_diff(_get_client(), owner, repo, base, head)
+    return await _safe(git_ops.get_diff(_get_client(), owner, repo, base, head))
 
 
 @mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True}, timeout=30)
@@ -351,7 +366,7 @@ async def get_blame(
         path: File path within the repository.
         ref: Branch, tag, or commit SHA. Defaults to HEAD.
     """
-    return await git_ops.get_blame(_get_client(), owner, repo, path, ref)
+    return await _safe(git_ops.get_blame(_get_client(), owner, repo, path, ref))
 
 
 @mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True})
@@ -371,7 +386,7 @@ async def get_file_history(
         ref: Branch, tag, or commit SHA. Defaults to the repo's default branch.
         limit: Maximum number of commits to return (default: 20).
     """
-    return await git_ops.get_file_history(_get_client(), owner, repo, path, ref, limit)
+    return await _safe(git_ops.get_file_history(_get_client(), owner, repo, path, ref, limit))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -390,7 +405,7 @@ async def get_repo_info(
         owner: Repository owner (user or organization).
         repo: Repository name.
     """
-    return await repo_info.get_repo_info(_get_client(), owner, repo)
+    return await _safe(repo_info.get_repo_info(_get_client(), owner, repo))
 
 
 @mcp.tool(tags={"read", "repo"}, annotations={"readOnlyHint": True})
@@ -410,9 +425,9 @@ async def get_repo_structure(
         max_depth: Maximum depth of tree to display (e.g. 2 for top-level + one level).
         path_filter: Optional glob pattern to filter paths (e.g. "src/**").
     """
-    return await repo_info.get_repo_structure(
+    return await _safe(repo_info.get_repo_structure(
         _get_client(), owner, repo, ref, max_depth, path_filter
-    )
+    ))
 
 
 @mcp.tool(tags={"read", "repo"}, annotations={"readOnlyHint": True})
@@ -426,7 +441,7 @@ async def get_languages(
         owner: Repository owner (user or organization).
         repo: Repository name.
     """
-    return await repo_info.get_languages(_get_client(), owner, repo)
+    return await _safe(repo_info.get_languages(_get_client(), owner, repo))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -476,7 +491,7 @@ async def create_branch(
         from_ref: Branch name, tag, or commit SHA to branch off from.
                   Defaults to the repo's default branch.
     """
-    return await write_ops.create_branch(_get_client(), owner, repo, branch, from_ref)
+    return await _safe(write_ops.create_branch(_get_client(), owner, repo, branch, from_ref))
 
 
 @mcp.tool(tags={"write"}, annotations={"readOnlyHint": False, "destructiveHint": True})
@@ -505,7 +520,7 @@ async def push_files(
         [{"path": "src/app.py", "content": "print('hello')"},
          {"path": "README.md", "content": "# My Project"}]
     """
-    return await write_ops.push_files(_get_client(), owner, repo, branch, files, message)
+    return await _safe(write_ops.push_files(_get_client(), owner, repo, branch, files, message))
 
 
 @mcp.tool(tags={"write"}, annotations={"readOnlyHint": False, "destructiveHint": True})
@@ -525,7 +540,7 @@ async def delete_file(
         message: Commit message for the deletion.
         branch: Branch to delete the file from.
     """
-    return await write_ops.delete_file(_get_client(), owner, repo, path, message, branch)
+    return await _safe(write_ops.delete_file(_get_client(), owner, repo, path, message, branch))
 
 
 @mcp.tool(tags={"write", "ci"}, annotations={"readOnlyHint": False, "destructiveHint": False})
@@ -549,9 +564,9 @@ async def list_workflow_runs(
                 "stale", "success", "timed_out", "waiting".
         limit: Maximum number of runs to return (default: 10).
     """
-    return await write_ops.list_workflow_runs(
+    return await _safe(write_ops.list_workflow_runs(
         _get_client(), owner, repo, workflow_id, branch, status, limit
-    )
+    ))
 
 
 @mcp.tool(tags={"write", "ci"}, annotations={"readOnlyHint": False, "destructiveHint": False})
@@ -574,7 +589,7 @@ async def get_workflow_run_logs(
         max_chars: Maximum log characters to return (default: 20000).
                    Increase if you need more context, but be aware of response size.
     """
-    return await write_ops.get_workflow_run_logs(_get_client(), owner, repo, run_id, max_chars)
+    return await _safe(write_ops.get_workflow_run_logs(_get_client(), owner, repo, run_id, max_chars))
 
 
 @mcp.tool(tags={"write", "ci"}, annotations={"readOnlyHint": False, "destructiveHint": True})
@@ -596,7 +611,7 @@ async def trigger_workflow(
         ref: Branch or tag name to run the workflow on (e.g. "main").
         inputs: Optional key/value inputs defined in the workflow's workflow_dispatch config.
     """
-    return await write_ops.trigger_workflow(_get_client(), owner, repo, workflow_id, ref, inputs)
+    return await _safe(write_ops.trigger_workflow(_get_client(), owner, repo, workflow_id, ref, inputs))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -628,9 +643,9 @@ async def create_pull_request(
         body: Optional PR description (supports Markdown).
         draft: If True, open as a draft pull request.
     """
-    return await pr_ops.create_pull_request(
+    return await _safe(pr_ops.create_pull_request(
         _get_client(), owner, repo, title, head, base, body, draft
-    )
+    ))
 
 
 @mcp.tool(tags={"read", "pr"}, annotations={"readOnlyHint": True})
@@ -652,7 +667,7 @@ async def list_pull_requests(
         base: Filter by base branch (e.g. "main").
         limit: Maximum number of PRs to return (default: 20).
     """
-    return await pr_ops.list_pull_requests(_get_client(), owner, repo, state, head, base, limit)
+    return await _safe(pr_ops.list_pull_requests(_get_client(), owner, repo, state, head, base, limit))
 
 
 @mcp.tool(tags={"read", "pr"}, annotations={"readOnlyHint": True})
@@ -668,7 +683,7 @@ async def get_pull_request(
         repo: Repository name.
         pull_number: The pull request number.
     """
-    return await pr_ops.get_pull_request(_get_client(), owner, repo, pull_number)
+    return await _safe(pr_ops.get_pull_request(_get_client(), owner, repo, pull_number))
 
 
 @mcp.tool(tags={"write", "pr"}, annotations={"readOnlyHint": False, "destructiveHint": True})
@@ -688,9 +703,9 @@ async def merge_pull_request(
         commit_title: Optional custom commit title for the merge commit.
         merge_method: Merge strategy: "merge" (default), "squash", or "rebase".
     """
-    return await pr_ops.merge_pull_request(
+    return await _safe(pr_ops.merge_pull_request(
         _get_client(), owner, repo, pull_number, commit_title, merge_method
-    )
+    ))
 
 
 @mcp.tool(tags={"write", "pr"}, annotations={"readOnlyHint": False, "destructiveHint": False})
@@ -708,7 +723,7 @@ async def add_pr_comment(
         pull_number: The pull request number to comment on.
         body: Comment text (supports Markdown).
     """
-    return await pr_ops.add_pr_comment(_get_client(), owner, repo, pull_number, body)
+    return await _safe(pr_ops.add_pr_comment(_get_client(), owner, repo, pull_number, body))
 
 
 @mcp.tool(tags={"write", "pr"}, annotations={"readOnlyHint": False, "destructiveHint": False})
@@ -728,7 +743,7 @@ async def create_issue(
         body: Optional issue body (supports Markdown).
         labels: Optional list of label names to apply (e.g. ["bug", "help wanted"]).
     """
-    return await pr_ops.create_issue(_get_client(), owner, repo, title, body, labels)
+    return await _safe(pr_ops.create_issue(_get_client(), owner, repo, title, body, labels))
 
 
 # ═══════════════════════════════════════════════════════════════════════
