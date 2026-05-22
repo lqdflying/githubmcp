@@ -104,6 +104,7 @@ mcp = FastMCP(
     ),
     lifespan=lifespan,
     auth=_auth,
+    mask_error_details=True,
 )
 
 # When MCP_READ_ONLY=true, hide all tools tagged "write" via Visibility transform.
@@ -227,7 +228,7 @@ async def find_files(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@mcp.tool(tags={"read", "search"}, annotations={"readOnlyHint": True})
+@mcp.tool(tags={"read", "search"}, annotations={"readOnlyHint": True}, timeout=30)
 async def search_code(
     owner: str,
     repo: str,
@@ -315,7 +316,7 @@ async def get_commits(
     return await git_ops.get_commits(_get_client(), owner, repo, ref, path, limit)
 
 
-@mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True})
+@mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True}, timeout=30)
 async def get_diff(
     owner: str,
     repo: str,
@@ -333,7 +334,7 @@ async def get_diff(
     return await git_ops.get_diff(_get_client(), owner, repo, base, head)
 
 
-@mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True})
+@mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True}, timeout=30)
 async def get_blame(
     owner: str,
     repo: str,
@@ -452,18 +453,6 @@ async def get_rate_limit() -> str:
             f"Resets at: {reset_dt.isoformat()}"
         )
     return "Rate limit info not yet available (no API calls made)."
-
-
-# ── Write permission error helper ────────────────────────────────────
-
-_WRITE_PERM_HINT = (
-    "GitHub API returned 403 (permission denied).\n"
-    "Write tools require additional PAT permissions:\n"
-    "  • Classic token: 'repo' scope\n"
-    "  • Fine-grained token: Contents: Read+Write, Metadata: Read,\n"
-    "    Pull requests: Read+Write, Actions: Read+Write\n"
-    "Or set MCP_READ_ONLY=true to disable write tools entirely."
-)
 
 
 # ═══════════════════════════════════════════════════════════════════════

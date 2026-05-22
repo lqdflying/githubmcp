@@ -1,21 +1,10 @@
 """Code search tools: search_code, get_file_summary."""
 
+import fnmatch
 import re
 
-from src.cache import tree_cache
 from src.github_client import GitHubClient, GitHubAPIError
-
-
-async def _get_cached_tree(
-    client: GitHubClient, owner: str, repo: str, ref: str | None
-) -> list[dict]:
-    cache_key = f"tree:{owner}/{repo}:{ref or 'default'}"
-    cached = tree_cache.get(cache_key)
-    if cached is not None:
-        return cached
-    tree = await client.get_full_tree(owner, repo, ref)
-    tree_cache.set(cache_key, tree)
-    return tree
+from src.tools._utils import _get_cached_tree, _human_size
 
 
 # Map file extensions to language names
@@ -96,8 +85,6 @@ async def search_code(
     Returns:
         Search results showing file path, line number, and matching line content.
     """
-    import fnmatch as _fnmatch
-
     # For regex or non-default-branch searches, do local search
     if is_regexp or ref:
         return await _local_search(
@@ -121,7 +108,7 @@ async def search_code(
         lines = [f"Found {result.get('total_count', len(items))} result(s) for '{query}':\n"]
         for item in items[:max_results]:
             path = item.get("path", "")
-            if include_pattern and not _fnmatch.fnmatch(path, include_pattern):
+            if include_pattern and not fnmatch.fnmatch(path, include_pattern):
                 continue
             lines.append(f"  {path}")
 
@@ -145,8 +132,6 @@ async def _local_search(
     max_results: int,
 ) -> str:
     """Fetch files from the repo tree and search contents locally."""
-    import fnmatch as _fnmatch
-
     tree = await _get_cached_tree(client, owner, repo, ref)
 
     # Build list of files to search
@@ -158,7 +143,7 @@ async def _local_search(
         # Skip binary-looking files
         if _is_likely_binary(path):
             continue
-        if include_pattern and not _fnmatch.fnmatch(path, include_pattern):
+        if include_pattern and not fnmatch.fnmatch(path, include_pattern):
             continue
         # Skip very large files (> 500KB)
         if entry.get("size", 0) > 500_000:
@@ -288,11 +273,3 @@ def _is_likely_binary(path: str) -> bool:
     """Check if a file path looks like a binary file."""
     lower = path.lower()
     return any(lower.endswith(ext) for ext in _BINARY_EXTENSIONS)
-
-
-def _human_size(size_bytes: int) -> str:
-    if size_bytes < 1024:
-        return f"{size_bytes} B"
-    if size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    return f"{size_bytes / (1024 * 1024):.1f} MB"
