@@ -25,12 +25,6 @@ Use this server callback path:
 https://your-domain/auth/callback
 ```
 
-Example:
-
-```
-https://githubmcp.lqdflying.info/auth/callback
-```
-
 This flow uses FastMCP's built-in `GitHubProvider` as an OAuth 2.1 proxy with DCR, PKCE, and CIMD. The server manages the full OAuth lifecycle.
 
 ## Callback URL Setup
