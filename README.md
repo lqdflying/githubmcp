@@ -189,9 +189,9 @@ MCP Client (VS Code / Copilot Studio)
         │
         │  Layer 1 — "Who are you?"
         │  Proved by: MCP_API_TOKEN (static)
-        │              or GitHub OAuth token
+        │              or GitHub OAuth (2.1 proxy or 2.0 raw token)
         ▼
-MCP Server (this server)
+MCP Server (this server)  ← FastMCP 3.3.1 MultiAuth
         │
         │  Layer 2 — "Fetch GitHub data"
         │  Always uses: GITHUB_PAT (server's own token)
@@ -207,13 +207,25 @@ GitHub API
 - Even after OAuth sign-in, a user can only access repos that `GITHUB_PAT` has permission for
 - `ALLOWED_GITHUB_LOGINS` is the mechanism to restrict OAuth to specific GitHub accounts
 
-### Auth Modes
+### Auth Modes (FastMCP 3.3.1 MultiAuth)
 
-| `MCP_AUTH_MODE` | Who can connect | Best for |
-|-----------------|----------------|---------|
-| `token` | Anyone with the `MCP_API_TOKEN` value | Local / trusted environments |
-| `oauth` | GitHub accounts listed in `ALLOWED_GITHUB_LOGINS` | Remote deployments requiring identity |
-| `both` *(default)* | Either token or GitHub OAuth | Supporting multiple client types simultaneously |
+MultiAuth composes three providers. Incoming requests are tried in order:
+
+```
+1. OAuth 2.1 proxy (GitHubProvider)          ← DCR + PKCE + CIMD (VS Code, Cursor)
+        ↓ fail
+2. Static bearer token (DebugTokenVerifier)   ← hmac.compare_digest (automation, Lobehub)
+        ↓ fail
+3. Raw OAuth 2.0 token (GitHubTokenVerifier)  ← validated via GitHub API (Power Automate)
+        ↓ fail
+        → 401 Unauthorized
+```
+
+| `MCP_AUTH_MODE` | Providers enabled | Best for |
+|-----------------|-----------------|---------|
+| `token` | Static token only (step 2) | Local / trusted environments |
+| `oauth` | OAuth 2.1 proxy + raw OAuth 2.0 (steps 1, 3) | Remote deployments requiring identity |
+| `both` *(default)* | All three providers (steps 1, 2, 3) | Supporting multiple client types simultaneously |
 
 ---
 
@@ -486,6 +498,7 @@ Required for Scenarios 2, 3, and 4. GitHub Apps support **up to 10 callback URLs
 | `BASE_URL` | Conditional | — | Public HTTPS URL of this server, e.g. `https://your-domain`. Required when OAuth is enabled (used for OAuth metadata and callbacks). |
 | `GITHUB_OAUTH_SCOPES` | No | `user` | Scopes requested during GitHub OAuth. `user` is sufficient for identity verification. Child scopes like `read:user` are automatically normalised to their parent (`user`) at startup, so both values behave identically. |
 | `ALLOWED_GITHUB_LOGINS` | **Strongly recommended** | *(empty = allow all)* | Comma-separated GitHub usernames permitted for OAuth. **Empty means any GitHub account can sign in.** |
+| `FASTMCP_HOME` | No | *(unset = in-memory)* | Writable directory for persistent encrypted OAuth storage (survives restarts). When unset, OAuth state is in-memory. Set in Docker via volume mount (e.g. `FASTMCP_HOME=/data/fastmcp`). |
 | `MCP_STATELESS` | No | `true` | `true` — stateless mode (default, recommended): new transport per request, survives restarts with no stale session issues. `false` — stateful mode: enables SSE event replay via Redis so clients can resume a dropped stream using `Last-Event-ID`; requires both Upstash vars; sessions are in-memory so clients must re-connect after a server restart. |
 | `UPSTASH_REDIS_REST_URL` | When `MCP_STATELESS=false` | — | Upstash REST URL from the Upstash console (e.g. `https://host.upstash.io`). Both Upstash vars must be set together. Ignored when `MCP_STATELESS=true`. |
 | `UPSTASH_REDIS_REST_TOKEN` | When `MCP_STATELESS=false` | — | Upstash REST token from the Upstash console. Both Upstash vars must be set together. Ignored when `MCP_STATELESS=true`. |
@@ -524,6 +537,8 @@ PORT=8000
 ```
 
 ### 2. Start with Docker Compose
+
+`FASTMCP_HOME` is set to `/data/fastmcp` with a named volume — OAuth sessions survive container restarts.
 
 ```bash
 docker compose up -d          # start in background
@@ -928,18 +943,19 @@ create_issue(owner="owner", repo="repo", title="Bug: login fails",
 ## Architecture
 
 ```
-server.py                    ← FastMCP entry point (Streamable HTTP transport); all 26 tools
+server.py                    ← FastMCP 3.3.1 entry point (Streamable HTTP); 29 tools
 src/
 ├── github_client.py         ← Async GitHub REST + GraphQL client (httpx)
 ├── cache.py                 ← In-memory TTL cache (trees: 5 min, files: 2 min)
-├── auth/                    ← Auth providers (token, OAuth, both)
+├── auth/                    ← FastMCP 3.3.1 MultiAuth (token + OAuth 2.1 + OAuth 2.0)
 └── tools/
     ├── file_ops.py          ← read_file, list_directory, find_files
     ├── code_search.py       ← search_code, get_file_summary
     ├── git_ops.py           ← list_branches, get_commits, get_diff, get_blame, get_file_history
     ├── repo_info.py         ← get_repo_info, get_repo_structure, get_languages, get_rate_limit
     ├── write_ops.py         ← create_branch, push_files, delete_file, workflow tools
-    └── pr_ops.py            ← create/list/get/merge PR, add_pr_comment, create_issue
+    ├── pr_ops.py            ← create/list/get/merge PR, add_pr_comment, create_issue
+    └── todo_ops.py          ← todo_write, todo_read, todo_update (in-session task tracking)
 tests/
 ├── conftest.py              ← Shared mock_client fixture
 └── test_*.py                ← Unit tests per tool module
@@ -956,8 +972,10 @@ docs/
 | Write tools use Git Data API for `push_files` | Blob → tree → commit → update ref allows multiple files in one atomic commit, matching how real editors work |
 | Write 403 errors include permission hints | When a write call fails due to insufficient PAT scope, the error message lists exactly which fine-grained permissions are needed |
 | Server-side PAT for all GitHub calls | Clients never need GitHub permissions themselves; OAuth is identity-only |
+| FastMCP 3.3.1 MultiAuth | Composes three providers (OAuth 2.1 proxy + static token + raw OAuth 2.0) in one server — no custom auth protocol code |
 | GitHub App (not OAuth App) for OAuth | GitHub Apps support up to 10 callback URLs — one app covers VS Code, Copilot Studio, and any other client |
-| Scope normalisation at startup | `GITHUB_OAUTH_SCOPES` child scopes (e.g. `read:user`) are mapped to their GitHub parent (`user`) at parse time. GitHub App tokens return only the parent scope (or nothing); requiring the parent directly means both classic OAuth Apps and GitHub Apps pass the same check without any runtime scope expansion logic. |
+| OAuth storage: in-memory by default | Works out of the box on read-only filesystems (containers, serverless). Set `FASTMCP_HOME` for persistent encrypted file storage that survives restarts |
+| Scope normalisation at startup | `GITHUB_OAUTH_SCOPES` child scopes (e.g. `read:user`) are mapped to their GitHub parent (`user`) at parse time |
 | In-memory TTL cache | Reduces GitHub API calls; trees cached 5 min, files 2 min |
 | Large file fallback to Blobs API | Files > 1 MB bypass the Contents API size limit automatically |
 | Dual search strategy | Simple text → GitHub Search API; regex or branch-specific → local `re` search |
