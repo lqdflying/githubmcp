@@ -7,7 +7,9 @@ mode, or a MultiAuth compositor for OAuth/both modes.
 
 import os
 import sys
+from pathlib import Path
 
+from fastmcp import settings as fastmcp_settings
 from fastmcp.server.auth import MultiAuth
 from key_value.aio.stores.memory import MemoryStore
 
@@ -114,11 +116,18 @@ def setup_auth():
     #
     # Set FASTMCP_HOME to point to a writable directory to switch to
     # persistent encrypted file storage that survives restarts.
+    #
+    # FastMCP reads settings.home at import time, so we must sync it
+    # with the runtime FASTMCP_HOME value before constructing the
+    # provider.  Otherwise the default file store ignores the runtime
+    # env var and writes to the import-time default path.
     fastmcp_home = os.environ.get("FASTMCP_HOME", "").strip()
-    client_storage = None if fastmcp_home else MemoryStore()
     if fastmcp_home:
+        fastmcp_settings.home = Path(fastmcp_home)
+        client_storage = None  # GitHubProvider creates encrypted file store at settings.home
         print(f"OAuth storage: persistent (FASTMCP_HOME={fastmcp_home})", file=sys.stderr)
     else:
+        client_storage = MemoryStore()
         print("OAuth storage: in-memory (set FASTMCP_HOME for persistent storage)", file=sys.stderr)
 
     # ── Build OAuth components ────────────────────────────────────────

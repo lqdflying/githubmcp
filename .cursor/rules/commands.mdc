@@ -1,0 +1,27 @@
+---
+description: Development commands for this project (install, run, test, lint)
+alwaysApply: true
+---
+
+# Commands
+
+```bash
+# Install with dev dependencies
+pip install -e ".[dev]"
+
+# Run the server (requires .env with GITHUB_PAT)
+python server.py
+
+# Run all tests
+pytest tests/
+
+# Run a single test file
+pytest tests/test_file_ops.py
+
+# Run a single test
+pytest tests/test_file_ops.py::test_read_file_success
+
+# Lint and format
+ruff check .
+ruff format .
+```

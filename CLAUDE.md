@@ -40,6 +40,7 @@ ruff format .
 | `BASE_URL` | When mode is `oauth` or `both` | Public URL of this server (for OAuth callbacks) |
 | `GITHUB_OAUTH_SCOPES` | No (default: `read:user`) | Comma-separated OAuth scopes |
 | `ALLOWED_GITHUB_LOGINS` | No | Comma-separated GitHub logins allowed via OAuth; empty = all users |
+| `FASTMCP_HOME` | No | Writable directory for persistent encrypted OAuth storage; unset = in-memory |
 | `MCP_AUTH_AUDIT_LOG` | No (default: `true`) | Log auth decisions (never logs token values) |
 | `MCP_STATELESS` | No (default: `true`) | `true` = stateless (survives restarts, recommended); `false` = stateful SSE replay via Redis (requires Upstash vars) |
 | `UPSTASH_REDIS_REST_URL` | When `MCP_STATELESS=false` | Upstash REST URL, e.g. `https://host.upstash.io`; both vars required |
@@ -59,7 +60,7 @@ src/
 ├── auth/
 │   ├── __init__.py          ← Exports setup_auth(), parse_bool()
 │   ├── provider.py          ← setup_auth(): reads env vars, validates, returns configured provider
-│   ├── oauth.py             ← RFC 8252 CIMD, scope normalization, TokenOrGitHubOAuthProvider
+│   ├── oauth.py             ← Scope normalization, LoginFilteredGitHubProvider, LoginFilteredGitHubTokenVerifier
 │   └── token.py             ← build_token_verifier() factory (DebugTokenVerifier + hmac)
 └── tools/
     ├── file_ops.py          ← read_file, list_directory, find_files
@@ -99,8 +100,10 @@ Files > 1 MB are fetched via the Git Blobs API (`get_blob`) instead of the Conte
 
 `MCP_AUTH_MODE` controls which authentication methods are accepted:
 
-- **`token`** — static `MCP_API_TOKEN` only; uses FastMCP's `DebugTokenVerifier`
-- **`oauth`** — GitHub OAuth only; uses FastMCP's `GitHubProvider`
-- **`both`** (default) — `TokenOrGitHubOAuthProvider` tries static token first (constant-time compare via `hmac.compare_digest`), then falls back to GitHub OAuth
+- **`token`** — static `MCP_API_TOKEN` only; uses `DebugTokenVerifier` with constant-time `hmac.compare_digest`
+- **`oauth`** — GitHub OAuth 2.1 proxy (`GitHubProvider`) + raw OAuth 2.0 token fallback (`GitHubTokenVerifier`)
+- **`both`** (default) — all three auth methods via `MultiAuth`: proxy → static token → raw token
 
-`ALLOWED_GITHUB_LOGINS` (when set) restricts OAuth sign-in to specific GitHub accounts. The `/health` endpoint is unauthenticated.
+`ALLOWED_GITHUB_LOGINS` (when set) restricts OAuth sign-in to specific GitHub accounts — enforced via `LoginFilteredGitHubProvider` and `LoginFilteredGitHubTokenVerifier` wrappers. The `/health` endpoint is unauthenticated.
+
+OAuth storage is in-memory by default (safe for read-only filesystems). Set `FASTMCP_HOME` to a writable directory for persistent encrypted file storage.

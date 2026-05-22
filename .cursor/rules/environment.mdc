@@ -1,0 +1,35 @@
+---
+description: Environment variables reference for this MCP server
+alwaysApply: true
+---
+
+# Environment Variables
+
+`GITHUB_PAT` is always required. Auth-mode variables determine what else is needed:
+
+| Variable | Required | Description |
+|---|---|---|
+| `GITHUB_PAT` | Always | GitHub PAT. **Read-only tools**: classic `public_repo`/`repo`; fine-grained `Contents: Read` + `Metadata: Read`. **Write tools**: classic `repo`; fine-grained `Contents: Read+Write` + `Metadata: Read` + `Pull requests: Read+Write` + `Actions: Read+Write` + `Issues: Read+Write` + `Workflows: Read+Write` |
+| `MCP_READ_ONLY` | No (default: `false`) | `true` = disable all write/PR/CI tools at startup |
+| `MCP_AUTH_MODE` | No (default: `both`) | `token`, `oauth`, or `both` |
+| `MCP_API_TOKEN` | When mode is `token` or `both` | Static bearer token for clients |
+| `GITHUB_CLIENT_ID` | When mode is `oauth` or `both` | GitHub OAuth App client ID |
+| `GITHUB_CLIENT_SECRET` | When mode is `oauth` or `both` | GitHub OAuth App client secret |
+| `BASE_URL` | When mode is `oauth` or `both` | Public URL of this server (for OAuth callbacks) |
+| `GITHUB_OAUTH_SCOPES` | No (default: `user`) | Comma-separated OAuth scopes |
+| `ALLOWED_GITHUB_LOGINS` | No | Comma-separated GitHub logins allowed via OAuth; empty = all users |
+| `FASTMCP_HOME` | No | Writable directory for persistent OAuth storage; unset = in-memory |
+| `MCP_AUTH_AUDIT_LOG` | No (default: `true`) | Log auth decisions (never logs token values) |
+| `MCP_STATELESS` | No (default: `true`) | `true` = stateless; `false` = stateful SSE replay via Redis (requires Upstash vars) |
+| `UPSTASH_REDIS_REST_URL` | When `MCP_STATELESS=false` | Upstash REST URL |
+| `UPSTASH_REDIS_REST_TOKEN` | When `MCP_STATELESS=false` | Upstash REST token |
+| `HOST` | No (default: `0.0.0.0`) | Bind address |
+| `PORT` | No (default: `8000`) | Bind port |
+
+Copy `.env.example` to `.env` and fill in values before running.
+
+## Auth Modes
+
+- **`token`** — static `MCP_API_TOKEN` only (DebugTokenVerifier with constant-time compare)
+- **`oauth`** — GitHub OAuth 2.1 proxy (GitHubProvider) + raw OAuth 2.0 token fallback (GitHubTokenVerifier)
+- **`both`** (default) — all three auth methods via MultiAuth: proxy, static token, raw token
