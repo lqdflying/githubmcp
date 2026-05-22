@@ -1,6 +1,6 @@
 [project]
 name = "github-repo-reader-mcp"
-version = "2.4.0"
+version = "2.4.1"
 description = "MCP server that provides GitHub repository reading capabilities via FastMCP"
 requires-python = ">=3.12"
 dependencies = [
