@@ -18,25 +18,39 @@ from src.github_client import GitHubAPIError, GitHubClient
 
 @pytest.fixture
 def server_module(monkeypatch):
-    """Load server.py with token auth and a fake GitHub client (no network)."""
+    """Load server.py with token auth and a fake GitHub client (no network).
+
+    Restores any previous ``sys.modules['server']`` entry on teardown so later
+    tests are not affected by this module's test auth config or injected client.
+    """
     monkeypatch.setenv("MCP_AUTH_MODE", "token")
     monkeypatch.setenv("MCP_API_TOKEN", "test-api-token-integration")
     monkeypatch.delenv("GITHUB_CLIENT_ID", raising=False)
     monkeypatch.delenv("GITHUB_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("BASE_URL", raising=False)
 
+    previous_module = sys.modules.get("server")
     sys.modules.pop("server", None)
+
     import server
 
     importlib.reload(server)
 
+    previous_client = server._github_client
     mock_client = MagicMock(spec=GitHubClient)
     mock_client.get_file_content = AsyncMock(
         side_effect=GitHubAPIError(404, "Resource not found.")
     )
     server._github_client = mock_client
-    server._mock_client = mock_client
-    return server
+
+    try:
+        yield server, mock_client
+    finally:
+        server._github_client = previous_client
+        if previous_module is not None:
+            sys.modules["server"] = previous_module
+        else:
+            sys.modules.pop("server", None)
 
 
 @pytest.mark.asyncio
@@ -46,13 +60,15 @@ async def test_server_read_file_uses_safe_wrapper(server_module):
     Would fail with a generic "Error calling tool" if _safe(...) were removed from
     the read_file handler while mask_error_details=True stays enabled.
     """
+    server, mock_client = server_module
+
     with pytest.raises(ToolError) as exc_info:
-        await server_module.mcp.call_tool(
+        await server.mcp.call_tool(
             "read_file",
             {"owner": "owner", "repo": "repo", "path": "missing.py"},
         )
 
-    server_module._mock_client.get_file_content.assert_awaited_once_with(
+    mock_client.get_file_content.assert_awaited_once_with(
         "owner", "repo", "missing.py", None
     )
     assert "Resource not found." in str(exc_info.value)
