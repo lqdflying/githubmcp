@@ -8,11 +8,16 @@ import logging
 import os
 import sys
 import time
+import asyncio
+from collections import OrderedDict
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from hashlib import sha256
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import get_http_request
 from fastmcp.server.middleware import Middleware
 from fastmcp.server.transforms import Visibility
 from starlette.requests import Request
@@ -26,9 +31,18 @@ load_dotenv()
 
 # ── Read-only mode ────────────────────────────────────────────────────
 # When MCP_READ_ONLY=true, all write/PR/CI tools are skipped at registration
-# time. Use this when your GITHUB_PAT only has read permissions.
+# time. Use this when your GitHub PATs only have read permissions.
 # load_dotenv() must be called first so .env values are available here.
 _READ_ONLY = parse_bool(os.environ.get("MCP_READ_ONLY", "false"), default=False)
+_VALID_GITHUB_TOKEN_MODES = {"env", "request", "request_or_env"}
+_GITHUB_TOKEN_MODE = os.environ.get("GITHUB_TOKEN_MODE", "env").strip().lower()
+_GITHUB_PAT_HEADER = os.environ.get("GITHUB_PAT_HEADER", "X-GitHub-PAT").strip() or "X-GitHub-PAT"
+_GITHUB_CLIENT_CACHE_MAX_SIZE_DEFAULT = 128
+_GITHUB_CLIENT_CACHE_TTL_SECONDS_DEFAULT = 1800
+_VALIDATE_REQUEST_PAT = parse_bool(
+    os.environ.get("GITHUB_VALIDATE_REQUEST_PAT", "true"),
+    default=True,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,22 +57,213 @@ logger = logging.getLogger(__name__)
 _github_client: GitHubClient | None = None
 
 
+@dataclass
+class _CachedGitHubClient:
+    client: GitHubClient
+    created_at: float
+    last_used_at: float
+
+
+_request_github_clients: OrderedDict[str, _CachedGitHubClient] = OrderedDict()
+_request_github_clients_lock = asyncio.Lock()
+
+
+def _get_github_token_mode() -> str:
+    if _GITHUB_TOKEN_MODE not in _VALID_GITHUB_TOKEN_MODES:
+        print(
+            "ERROR: GITHUB_TOKEN_MODE must be one of: env, request, request_or_env.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if (
+        _GITHUB_TOKEN_MODE in {"request", "request_or_env"}
+        and _GITHUB_PAT_HEADER.lower() == "authorization"
+    ):
+        print(
+            "ERROR: GITHUB_PAT_HEADER must not be Authorization. "
+            "Authorization is reserved for MCP server authentication.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return _GITHUB_TOKEN_MODE
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"ERROR: {name} must be a positive integer.", file=sys.stderr)
+        sys.exit(1)
+    if value < 1:
+        print(f"ERROR: {name} must be a positive integer.", file=sys.stderr)
+        sys.exit(1)
+    return value
+
+
+def _request_client_cache_max_size() -> int:
+    return _positive_int_env(
+        "GITHUB_CLIENT_CACHE_MAX_SIZE",
+        _GITHUB_CLIENT_CACHE_MAX_SIZE_DEFAULT,
+    )
+
+
+def _request_client_cache_ttl_seconds() -> int:
+    return _positive_int_env(
+        "GITHUB_CLIENT_CACHE_TTL_SECONDS",
+        _GITHUB_CLIENT_CACHE_TTL_SECONDS_DEFAULT,
+    )
+
+
+def _normalize_pat(raw: str | None) -> str | None:
+    if raw is None:
+        return None
+    token = raw.strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    return token or None
+
+
+def _request_pat() -> str | None:
+    try:
+        request = get_http_request()
+    except RuntimeError:
+        return None
+    return _normalize_pat(request.headers.get(_GITHUB_PAT_HEADER))
+
+
+def _token_cache_key(token: str) -> str:
+    return sha256(token.encode("utf-8")).hexdigest()
+
+
+async def _close_client(client: GitHubClient) -> None:
+    try:
+        await client.close()
+    except Exception as e:
+        log.warning("Failed to close GitHub client: %s", e)
+
+
+async def _close_clients(clients: list[GitHubClient]) -> None:
+    for client in clients:
+        await _close_client(client)
+
+
+def _collect_expired_request_clients(now: float) -> list[GitHubClient]:
+    ttl_seconds = _request_client_cache_ttl_seconds()
+    expired_keys = [
+        key
+        for key, entry in _request_github_clients.items()
+        if now - entry.last_used_at >= ttl_seconds
+    ]
+    return [_request_github_clients.pop(key).client for key in expired_keys]
+
+
+def _collect_overflow_request_clients() -> list[GitHubClient]:
+    max_size = _request_client_cache_max_size()
+    evicted: list[GitHubClient] = []
+    while len(_request_github_clients) > max_size:
+        _, entry = _request_github_clients.popitem(last=False)
+        evicted.append(entry.client)
+    return evicted
+
+
+async def _prune_request_client_cache(now: float | None = None) -> None:
+    now = time.monotonic() if now is None else now
+    await _close_clients(_collect_expired_request_clients(now))
+    await _close_clients(_collect_overflow_request_clients())
+
+
+async def _client_for_token(token: str) -> GitHubClient:
+    key = _token_cache_key(token)
+    now = time.monotonic()
+
+    async with _request_github_clients_lock:
+        await _prune_request_client_cache(now)
+
+        entry = _request_github_clients.get(key)
+        if entry is not None:
+            entry.last_used_at = now
+            _request_github_clients.move_to_end(key)
+            return entry.client
+
+    client = GitHubClient(token)
+    if _VALIDATE_REQUEST_PAT:
+        try:
+            await client.validate_token()
+        except GitHubAPIError as e:
+            await _close_client(client)
+            raise ToolError(
+                f"GitHub PAT from {_GITHUB_PAT_HEADER} is invalid or unauthorized: {e}"
+            ) from e
+
+    now = time.monotonic()
+    async with _request_github_clients_lock:
+        await _prune_request_client_cache(now)
+        entry = _request_github_clients.get(key)
+        if entry is not None:
+            entry.last_used_at = now
+            _request_github_clients.move_to_end(key)
+            await _close_client(client)
+            return entry.client
+
+        _request_github_clients[key] = _CachedGitHubClient(
+            client=client,
+            created_at=now,
+            last_used_at=now,
+        )
+        _request_github_clients.move_to_end(key)
+        await _close_clients(_collect_overflow_request_clients())
+        return client
+
+
+async def _close_github_clients() -> None:
+    global _github_client
+    if _github_client is not None:
+        await _close_client(_github_client)
+        _github_client = None
+
+    async with _request_github_clients_lock:
+        clients = [entry.client for entry in _request_github_clients.values()]
+        _request_github_clients.clear()
+        await _close_clients(clients)
+
+
 @asynccontextmanager
 async def lifespan(server: FastMCP):
     global _github_client
-    token = os.environ.get("GITHUB_PAT", "")
-    if not token:
+    github_token_mode = _get_github_token_mode()
+    if github_token_mode in {"request", "request_or_env"}:
+        _request_client_cache_max_size()
+        _request_client_cache_ttl_seconds()
+    token = os.environ.get("GITHUB_PAT", "").strip()
+    needs_env_token = github_token_mode == "env"
+    can_use_env_token = github_token_mode in {"env", "request_or_env"}
+
+    if needs_env_token and not token:
         print("ERROR: GITHUB_PAT environment variable is required.", file=sys.stderr)
         sys.exit(1)
 
-    _github_client = GitHubClient(token)
-    try:
-        user = await _github_client.validate_token()
-        print(f"Authenticated as GitHub user: {user.get('login', 'unknown')}", file=sys.stderr)
-    except GitHubAPIError as e:
-        print(f"ERROR: Failed to validate GitHub token: {e}", file=sys.stderr)
-        await _github_client.close()
-        sys.exit(1)
+    if can_use_env_token and token:
+        _github_client = GitHubClient(token)
+        try:
+            user = await _github_client.validate_token()
+            print(f"Authenticated as GitHub user: {user.get('login', 'unknown')}", file=sys.stderr)
+        except GitHubAPIError as e:
+            print(f"ERROR: Failed to validate GitHub token: {e}", file=sys.stderr)
+            await _close_github_clients()
+            sys.exit(1)
+    elif github_token_mode == "request":
+        print(
+            f"GitHub PAT source: per-request header ({_GITHUB_PAT_HEADER}); "
+            "GITHUB_PAT is not required.",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"GitHub PAT source: per-request header ({_GITHUB_PAT_HEADER}); "
+            "no GITHUB_PAT fallback configured.",
+            file=sys.stderr,
+        )
 
     if _READ_ONLY:
         print(
@@ -69,20 +274,36 @@ async def lifespan(server: FastMCP):
     else:
         print(
             "Running in READ+WRITE mode. "
-            "Ensure GITHUB_PAT has write permissions (classic: 'repo'; "
+            "Ensure configured GitHub PATs have write permissions (classic: 'repo'; "
             "fine-grained: Contents+PR+Actions write). "
             "Set MCP_READ_ONLY=true to disable write tools.",
             file=sys.stderr,
         )
 
-    yield
+    try:
+        yield
+    finally:
+        await _close_github_clients()
 
-    await _github_client.close()
 
+async def _get_client() -> GitHubClient:
+    github_token_mode = _get_github_token_mode()
 
-def _get_client() -> GitHubClient:
+    if github_token_mode in {"request", "request_or_env"}:
+        token = _request_pat()
+        if token:
+            return await _client_for_token(token)
+        if github_token_mode == "request":
+            raise ToolError(
+                f"Missing GitHub PAT header: {_GITHUB_PAT_HEADER}. "
+                "Send the GitHub token separately from MCP authentication."
+            )
+
     if _github_client is None:
-        raise RuntimeError("GitHub client not initialized. Server lifespan not started.")
+        raise ToolError(
+            "No GitHub PAT is available. Set GITHUB_PAT or send "
+            f"{_GITHUB_PAT_HEADER} with the request."
+        )
     return _github_client
 
 
@@ -199,7 +420,7 @@ async def read_file(
         start_line: First line to return (1-based, inclusive). Omit to start from beginning.
         end_line: Last line to return (1-based, inclusive). Omit to read to end.
     """
-    return await _safe(file_ops.read_file(_get_client(), owner, repo, path, ref, start_line, end_line))
+    return await _safe(file_ops.read_file(await _get_client(), owner, repo, path, ref, start_line, end_line))
 
 
 @mcp.tool(tags={"read", "file"}, annotations={"readOnlyHint": True})
@@ -217,7 +438,7 @@ async def list_directory(
         path: Directory path within the repository. Use "" for root.
         ref: Branch, tag, or commit SHA. Defaults to the repo's default branch.
     """
-    return await _safe(file_ops.list_directory(_get_client(), owner, repo, path, ref))
+    return await _safe(file_ops.list_directory(await _get_client(), owner, repo, path, ref))
 
 
 @mcp.tool(tags={"read", "file"}, annotations={"readOnlyHint": True})
@@ -235,7 +456,7 @@ async def find_files(
         pattern: Glob pattern to match file paths (e.g. "**/*.py", "src/**/*.ts", "*.md").
         ref: Branch, tag, or commit SHA. Defaults to the repo's default branch.
     """
-    return await _safe(file_ops.find_files(_get_client(), owner, repo, pattern, ref))
+    return await _safe(file_ops.find_files(await _get_client(), owner, repo, pattern, ref))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -268,7 +489,7 @@ async def search_code(
         max_results: Maximum number of matching lines to return (default: 50).
     """
     return await _safe(code_search.search_code(
-        _get_client(), owner, repo, query, is_regexp, include_pattern, ref, max_results
+        await _get_client(), owner, repo, query, is_regexp, include_pattern, ref, max_results
     ))
 
 
@@ -289,7 +510,7 @@ async def get_file_summary(
         ref: Branch, tag, or commit SHA. Defaults to the repo's default branch.
         preview_lines: Number of lines to show as preview (default: 20).
     """
-    return await _safe(code_search.get_file_summary(_get_client(), owner, repo, path, ref, preview_lines))
+    return await _safe(code_search.get_file_summary(await _get_client(), owner, repo, path, ref, preview_lines))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -308,7 +529,7 @@ async def list_branches(
         owner: Repository owner (user or organization).
         repo: Repository name.
     """
-    return await _safe(git_ops.list_branches(_get_client(), owner, repo))
+    return await _safe(git_ops.list_branches(await _get_client(), owner, repo))
 
 
 @mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True})
@@ -328,7 +549,7 @@ async def get_commits(
         path: Optional file path to filter commits that touched this file.
         limit: Maximum number of commits to return (default: 20).
     """
-    return await _safe(git_ops.get_commits(_get_client(), owner, repo, ref, path, limit))
+    return await _safe(git_ops.get_commits(await _get_client(), owner, repo, ref, path, limit))
 
 
 @mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True}, timeout=30)
@@ -346,7 +567,7 @@ async def get_diff(
         base: Base ref (branch, tag, or commit SHA) for comparison.
         head: Head ref (branch, tag, or commit SHA) for comparison.
     """
-    return await _safe(git_ops.get_diff(_get_client(), owner, repo, base, head))
+    return await _safe(git_ops.get_diff(await _get_client(), owner, repo, base, head))
 
 
 @mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True}, timeout=30)
@@ -366,7 +587,7 @@ async def get_blame(
         path: File path within the repository.
         ref: Branch, tag, or commit SHA. Defaults to HEAD.
     """
-    return await _safe(git_ops.get_blame(_get_client(), owner, repo, path, ref))
+    return await _safe(git_ops.get_blame(await _get_client(), owner, repo, path, ref))
 
 
 @mcp.tool(tags={"read", "git"}, annotations={"readOnlyHint": True})
@@ -386,7 +607,7 @@ async def get_file_history(
         ref: Branch, tag, or commit SHA. Defaults to the repo's default branch.
         limit: Maximum number of commits to return (default: 20).
     """
-    return await _safe(git_ops.get_file_history(_get_client(), owner, repo, path, ref, limit))
+    return await _safe(git_ops.get_file_history(await _get_client(), owner, repo, path, ref, limit))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -405,7 +626,7 @@ async def get_repo_info(
         owner: Repository owner (user or organization).
         repo: Repository name.
     """
-    return await _safe(repo_info.get_repo_info(_get_client(), owner, repo))
+    return await _safe(repo_info.get_repo_info(await _get_client(), owner, repo))
 
 
 @mcp.tool(tags={"read", "repo"}, annotations={"readOnlyHint": True})
@@ -426,7 +647,7 @@ async def get_repo_structure(
         path_filter: Optional glob pattern to filter paths (e.g. "src/**").
     """
     return await _safe(repo_info.get_repo_structure(
-        _get_client(), owner, repo, ref, max_depth, path_filter
+        await _get_client(), owner, repo, ref, max_depth, path_filter
     ))
 
 
@@ -441,7 +662,7 @@ async def get_languages(
         owner: Repository owner (user or organization).
         repo: Repository name.
     """
-    return await _safe(repo_info.get_languages(_get_client(), owner, repo))
+    return await _safe(repo_info.get_languages(await _get_client(), owner, repo))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -456,7 +677,7 @@ async def get_rate_limit() -> str:
     Returns:
         Current rate limit remaining, total, and reset time.
     """
-    client = _get_client()
+    client = await _get_client()
     if client.rate_limit:
         import datetime
 
@@ -491,7 +712,7 @@ async def create_branch(
         from_ref: Branch name, tag, or commit SHA to branch off from.
                   Defaults to the repo's default branch.
     """
-    return await _safe(write_ops.create_branch(_get_client(), owner, repo, branch, from_ref))
+    return await _safe(write_ops.create_branch(await _get_client(), owner, repo, branch, from_ref))
 
 
 @mcp.tool(tags={"write"}, annotations={"readOnlyHint": False, "destructiveHint": True})
@@ -520,7 +741,7 @@ async def push_files(
         [{"path": "src/app.py", "content": "print('hello')"},
          {"path": "README.md", "content": "# My Project"}]
     """
-    return await _safe(write_ops.push_files(_get_client(), owner, repo, branch, files, message))
+    return await _safe(write_ops.push_files(await _get_client(), owner, repo, branch, files, message))
 
 
 @mcp.tool(tags={"write"}, annotations={"readOnlyHint": False, "destructiveHint": True})
@@ -540,7 +761,7 @@ async def delete_file(
         message: Commit message for the deletion.
         branch: Branch to delete the file from.
     """
-    return await _safe(write_ops.delete_file(_get_client(), owner, repo, path, message, branch))
+    return await _safe(write_ops.delete_file(await _get_client(), owner, repo, path, message, branch))
 
 
 @mcp.tool(tags={"write", "ci"}, annotations={"readOnlyHint": False, "destructiveHint": False})
@@ -565,7 +786,7 @@ async def list_workflow_runs(
         limit: Maximum number of runs to return (default: 10).
     """
     return await _safe(write_ops.list_workflow_runs(
-        _get_client(), owner, repo, workflow_id, branch, status, limit
+        await _get_client(), owner, repo, workflow_id, branch, status, limit
     ))
 
 
@@ -589,7 +810,7 @@ async def get_workflow_run_logs(
         max_chars: Maximum log characters to return (default: 20000).
                    Increase if you need more context, but be aware of response size.
     """
-    return await _safe(write_ops.get_workflow_run_logs(_get_client(), owner, repo, run_id, max_chars))
+    return await _safe(write_ops.get_workflow_run_logs(await _get_client(), owner, repo, run_id, max_chars))
 
 
 @mcp.tool(tags={"write", "ci"}, annotations={"readOnlyHint": False, "destructiveHint": True})
@@ -611,7 +832,7 @@ async def trigger_workflow(
         ref: Branch or tag name to run the workflow on (e.g. "main").
         inputs: Optional key/value inputs defined in the workflow's workflow_dispatch config.
     """
-    return await _safe(write_ops.trigger_workflow(_get_client(), owner, repo, workflow_id, ref, inputs))
+    return await _safe(write_ops.trigger_workflow(await _get_client(), owner, repo, workflow_id, ref, inputs))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -644,7 +865,7 @@ async def create_pull_request(
         draft: If True, open as a draft pull request.
     """
     return await _safe(pr_ops.create_pull_request(
-        _get_client(), owner, repo, title, head, base, body, draft
+        await _get_client(), owner, repo, title, head, base, body, draft
     ))
 
 
@@ -667,7 +888,7 @@ async def list_pull_requests(
         base: Filter by base branch (e.g. "main").
         limit: Maximum number of PRs to return (default: 20).
     """
-    return await _safe(pr_ops.list_pull_requests(_get_client(), owner, repo, state, head, base, limit))
+    return await _safe(pr_ops.list_pull_requests(await _get_client(), owner, repo, state, head, base, limit))
 
 
 @mcp.tool(tags={"read", "pr"}, annotations={"readOnlyHint": True})
@@ -683,7 +904,7 @@ async def get_pull_request(
         repo: Repository name.
         pull_number: The pull request number.
     """
-    return await _safe(pr_ops.get_pull_request(_get_client(), owner, repo, pull_number))
+    return await _safe(pr_ops.get_pull_request(await _get_client(), owner, repo, pull_number))
 
 
 @mcp.tool(tags={"write", "pr"}, annotations={"readOnlyHint": False, "destructiveHint": True})
@@ -704,7 +925,7 @@ async def merge_pull_request(
         merge_method: Merge strategy: "merge" (default), "squash", or "rebase".
     """
     return await _safe(pr_ops.merge_pull_request(
-        _get_client(), owner, repo, pull_number, commit_title, merge_method
+        await _get_client(), owner, repo, pull_number, commit_title, merge_method
     ))
 
 
@@ -723,7 +944,7 @@ async def add_pr_comment(
         pull_number: The pull request number to comment on.
         body: Comment text (supports Markdown).
     """
-    return await _safe(pr_ops.add_pr_comment(_get_client(), owner, repo, pull_number, body))
+    return await _safe(pr_ops.add_pr_comment(await _get_client(), owner, repo, pull_number, body))
 
 
 @mcp.tool(tags={"write", "pr"}, annotations={"readOnlyHint": False, "destructiveHint": False})
@@ -743,7 +964,7 @@ async def create_issue(
         body: Optional issue body (supports Markdown).
         labels: Optional list of label names to apply (e.g. ["bug", "help wanted"]).
     """
-    return await _safe(pr_ops.create_issue(_get_client(), owner, repo, title, body, labels))
+    return await _safe(pr_ops.create_issue(await _get_client(), owner, repo, title, body, labels))
 
 
 # ═══════════════════════════════════════════════════════════════════════

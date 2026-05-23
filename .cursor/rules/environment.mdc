@@ -5,11 +5,19 @@ alwaysApply: true
 
 # Environment Variables
 
-`GITHUB_PAT` is always required. Auth-mode variables determine what else is needed:
+GitHub API access and MCP server authentication are separate:
+
+- GitHub API access uses `GITHUB_TOKEN_MODE` to choose either `GITHUB_PAT` or a per-request GitHub PAT header.
+- MCP server authentication uses `MCP_AUTH_MODE` with `MCP_API_TOKEN`, GitHub OAuth, or both.
 
 | Variable | Required | Description |
 |---|---|---|
-| `GITHUB_PAT` | Always | GitHub PAT. **Read-only tools**: classic `public_repo`/`repo`; fine-grained `Contents: Read` + `Metadata: Read`. **Write tools**: classic `repo`; fine-grained `Contents: Read+Write` + `Metadata: Read` + `Pull requests: Read+Write` + `Actions: Read+Write` + `Issues: Read+Write` + `Workflows: Read+Write` |
+| `GITHUB_TOKEN_MODE` | No (default: `env`) | GitHub PAT source: `env`, `request`, or `request_or_env` |
+| `GITHUB_PAT_HEADER` | No (default: `X-GitHub-PAT`) | Header for request-scoped GitHub PATs. Must not be `Authorization` |
+| `GITHUB_CLIENT_CACHE_MAX_SIZE` | No (default: `128`) | Max cached request-scoped GitHub clients; least-recently-used clients are closed on eviction |
+| `GITHUB_CLIENT_CACHE_TTL_SECONDS` | No (default: `1800`) | Idle TTL for cached request-scoped GitHub clients; expired clients are closed |
+| `GITHUB_VALIDATE_REQUEST_PAT` | No (default: `true`) | Validate each new request PAT with GitHub `/user` before caching |
+| `GITHUB_PAT` | When `GITHUB_TOKEN_MODE=env`; optional fallback for `request_or_env` | Server-level GitHub PAT. **Read-only tools**: classic `public_repo`/`repo`; fine-grained `Contents: Read` + `Metadata: Read`. **Write tools**: classic `repo`; fine-grained `Contents: Read+Write` + `Metadata: Read` + `Pull requests: Read+Write` + `Actions: Read+Write` |
 | `MCP_READ_ONLY` | No (default: `false`) | `true` = disable all write/PR/CI tools at startup |
 | `MCP_AUTH_MODE` | No (default: `both`) | `token`, `oauth`, or `both` |
 | `MCP_API_TOKEN` | When mode is `token` or `both` | Static bearer token for clients |
@@ -33,3 +41,13 @@ Copy `.env.example` to `.env` and fill in values before running.
 - **`token`** — static `MCP_API_TOKEN` only (DebugTokenVerifier with constant-time compare)
 - **`oauth`** — GitHub OAuth 2.1 proxy (GitHubProvider) + raw OAuth 2.0 token fallback (GitHubTokenVerifier)
 - **`both`** (default) — all three auth methods via MultiAuth: proxy, static token, raw token
+
+## GitHub Token Modes
+
+- **`env`** (default) — use `GITHUB_PAT` for every GitHub API call.
+- **`request`** — require each MCP request to send `GITHUB_PAT_HEADER`.
+- **`request_or_env`** — use the request header first, then fall back to `GITHUB_PAT`.
+
+Use a separate header such as `X-GitHub-PAT` for GitHub access. `Authorization` is reserved for MCP server authentication.
+
+In request modes, the server caches one GitHub client per distinct PAT with LRU and TTL eviction. Evicted clients are closed, and new request PATs are validated by default.

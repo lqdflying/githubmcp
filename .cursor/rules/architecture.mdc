@@ -6,13 +6,13 @@ alwaysApply: true
 # Architecture
 
 ```
-server.py                    ← FastMCP entry point; 29 MCP tool definitions
+server.py                    ← FastMCP entry point; auth setup; GitHubClient resolution; 29 MCP tool definitions
 src/
 ├── github_client.py         ← Async REST + GraphQL client (httpx); the only place that calls GitHub API
-├── cache.py                 ← Two shared TTLCache instances: tree_cache (5 min), file_cache (2 min)
+├── cache.py                 ← Shared repo data TTLCache instances: tree_cache (5 min), file_cache (2 min)
 ├── auth/
 │   ├── __init__.py          ← Exports setup_auth(), parse_bool()
-│   ├── provider.py          ← setup_auth(): reads env vars, builds MultiAuth provider
+│   ├── provider.py          ← setup_auth(): reads MCP auth env vars, builds MultiAuth provider
 │   ├── oauth.py             ← Scope normalization, LoginFilteredGitHubProvider, LoginFilteredGitHubTokenVerifier
 │   └── token.py             ← build_token_verifier() factory (DebugTokenVerifier + hmac)
 └── tools/
@@ -27,16 +27,38 @@ src/
 
 ## Two-layer tool pattern
 
-`server.py` contains thin `@mcp.tool()` wrappers that validate nothing -- they just call `_get_client()` and delegate to a pure async function in `src/tools/`. All real logic lives in the tool modules. This keeps tools independently testable without FastMCP.
+`server.py` contains thin `@mcp.tool()` wrappers that validate nothing -- they call async `_get_client()` and delegate to a pure async function in `src/tools/`. All real logic lives in the tool modules. This keeps tools independently testable without FastMCP.
 
 ## GitHubClient
 
-A single `GitHubClient` instance is created at startup (lifespan) and accessed via `_get_client()`. It wraps:
+`GitHubClient` wraps:
 - REST calls via `self._http` (httpx.AsyncClient with `api.github.com` base URL)
 - GraphQL calls via `self._graphql_http` (used only for blame)
 - Rate limit tracking -- updated from response headers on every call
 
 Files > 1 MB are fetched via the Git Blobs API (`get_blob`) instead of the Contents API.
+
+## GitHub Token Source
+
+GitHub API access is separate from MCP server authentication.
+
+`GITHUB_TOKEN_MODE` controls which PAT is used for GitHub API calls:
+
+- `env` (default) -- create and validate one server-level `GitHubClient` from `GITHUB_PAT` during lifespan startup.
+- `request` -- require each MCP request to send a GitHub PAT in `GITHUB_PAT_HEADER` (`X-GitHub-PAT` by default).
+- `request_or_env` -- use the request header first, then fall back to the server-level `GITHUB_PAT`.
+
+`Authorization` is reserved for MCP server authentication and must not be used as `GITHUB_PAT_HEADER`.
+
+## Request GitHubClient Cache
+
+In request modes, `server.py` keeps an `OrderedDict` cache of request-scoped `GitHubClient` instances keyed by SHA-256 of the PAT, never the plaintext token.
+
+- `GITHUB_CLIENT_CACHE_MAX_SIZE` bounds the number of cached request clients (default `128`).
+- `GITHUB_CLIENT_CACHE_TTL_SECONDS` closes clients idle past the TTL (default `1800`).
+- `GITHUB_VALIDATE_REQUEST_PAT=true` validates a new request PAT with GitHub `/user` before caching.
+- Evicted, expired, invalid, and shutdown clients are closed so httpx pools do not leak.
+- Cache mutation is protected by an async lock; concurrent first use of the same uncached PAT may perform duplicate validation, but the duplicate client is closed and only one client remains cached.
 
 ## Caching
 

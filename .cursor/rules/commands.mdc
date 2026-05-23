@@ -9,7 +9,7 @@ alwaysApply: true
 # Install with dev dependencies
 pip install -e ".[dev]"
 
-# Run the server (requires .env with GITHUB_PAT)
+# Run the server (requires .env with either GITHUB_PAT or GITHUB_TOKEN_MODE=request)
 python server.py
 
 # Run all tests
