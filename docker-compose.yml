@@ -1,6 +1,6 @@
 services:
   github-mcp:
-    image: lqdflying/githubmcp:v2.4.1
+    image: lqdflying/githubmcp:v2.4.2
     container_name: github-mcp
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
