@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/lqdflying-githubmcp-badge.png)](https://mseep.ai/app/lqdflying-githubmcp)
+
 # GitHub Repo Reader & Code Tools MCP Server
 
 An MCP (Model Context Protocol) server built with **FastMCP** that lets AI agents read, search, inspect, and write GitHub repositories through the GitHub API.
