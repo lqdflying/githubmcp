@@ -221,20 +221,31 @@ async def test_list_workflow_runs_empty(mock_client):
 # ── trigger_workflow ──────────────────────────────────────────────────
 
 
+# Dispatch response body under REST API version 2026-03-10:
+# https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event
+_DISPATCH_RUN = {
+    "workflow_run_id": 987654321,
+    "run_url": "https://api.github.com/repos/owner/repo/actions/runs/987654321",
+    "html_url": "https://github.com/owner/repo/actions/runs/987654321",
+}
+
+
 @pytest.mark.asyncio
 async def test_trigger_workflow(mock_client):
-    mock_client.trigger_workflow.return_value = None
+    mock_client.trigger_workflow.return_value = _DISPATCH_RUN
 
     result = await trigger_workflow(mock_client, "owner", "repo", "ci.yml", "main")
 
     mock_client.trigger_workflow.assert_called_once_with("owner", "repo", "ci.yml", "main", None)
     assert "ci.yml" in result
     assert "main" in result
+    assert "Run ID: 987654321" in result
+    assert "URL: https://github.com/owner/repo/actions/runs/987654321" in result
 
 
 @pytest.mark.asyncio
 async def test_trigger_workflow_with_inputs(mock_client):
-    mock_client.trigger_workflow.return_value = None
+    mock_client.trigger_workflow.return_value = _DISPATCH_RUN
 
     result = await trigger_workflow(
         mock_client, "owner", "repo", "deploy.yml", "v1.0", inputs={"env": "prod"}
@@ -244,6 +255,7 @@ async def test_trigger_workflow_with_inputs(mock_client):
         "owner", "repo", "deploy.yml", "v1.0", {"env": "prod"}
     )
     assert "prod" in result
+    assert "Run ID: 987654321" in result
 
 
 # ── helpers ───────────────────────────────────────────────────────────

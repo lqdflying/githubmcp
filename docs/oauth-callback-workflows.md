@@ -4,7 +4,7 @@ This document describes the three authentication paths supported by the MCP serv
 
 ---
 
-## Authentication Chain (FastMCP 3.3.1 MultiAuth)
+## Authentication Chain (FastMCP 4.2.0 MultiAuth)
 
 Every incoming request passes through `MultiAuth` in order:
 
