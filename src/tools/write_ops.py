@@ -306,6 +306,10 @@ async def trigger_workflow(
     inputs: dict[str, str] | None = None,
 ) -> str:
     """Trigger a workflow_dispatch event to run a CI workflow."""
-    await client.trigger_workflow(owner, repo, workflow_id, ref, inputs)
+    run = await client.trigger_workflow(owner, repo, workflow_id, ref, inputs)
     inputs_str = f"\nInputs: {inputs}" if inputs else ""
-    return f"Triggered workflow '{workflow_id}' on ref '{ref}'{inputs_str}"
+    return (
+        f"Triggered workflow '{workflow_id}' on ref '{ref}'{inputs_str}\n"
+        f"Run ID: {run['workflow_run_id']}\n"
+        f"URL: {run['html_url']}"
+    )

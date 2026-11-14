@@ -34,7 +34,7 @@ class GitHubClient:
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
+                "X-GitHub-Api-Version": "2026-03-10",
             },
             timeout=30.0,
         )
@@ -422,17 +422,17 @@ class GitHubClient:
 
     async def trigger_workflow(
         self, owner: str, repo: str, workflow_id: str, ref: str, inputs: dict | None = None
-    ) -> None:
-        """Trigger a workflow_dispatch event. Returns nothing on success (204)."""
+    ) -> dict:
+        """Trigger a workflow_dispatch event.
+
+        Returns the new run's ``workflow_run_id``, ``run_url``, and ``html_url``.
+        """
         payload: dict = {"ref": ref}
         if inputs:
             payload["inputs"] = inputs
-        response = await self._http.post(
+        return await self._post(
             f"/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches", json=payload
         )
-        self._update_rate_limit(response)
-        if response.status_code not in (200, 201, 204):
-            self._raise_for_status(response, is_write=True)
 
     async def get_workflow_run_jobs(self, owner: str, repo: str, run_id: int) -> dict:
         """List jobs and their step-level conclusions for a workflow run."""
