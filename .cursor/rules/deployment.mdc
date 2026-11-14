@@ -5,14 +5,18 @@ alwaysApply: true
 
 # Deployment Workflow
 
+## Branch policy
+
+This repository does not use working branches or pull requests. Commit on `main` and push `main` directly. This overrides any general rule that keeps `main` read-only.
+
 ## Trigger a new Docker image build
 
-When asked to "trigger a new image build" or "trigger a build":
+When asked to "trigger a new image build" or "trigger a build", run all steps in one pass:
 
 1. Check `pyproject.toml` for the current version
-2. Bump the version (patch/minor/major as appropriate)
-3. Commit the version bump
-4. Push `main` branch
+2. Bump the version (patch/minor/major as appropriate) in `pyproject.toml` and in the `docker-compose.yml` image tag
+3. Commit the version bump on `main`
+4. Push `main`
 5. Tag with `v<version>` and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
 6. This triggers `.github/workflows/docker-publish.yml`
 
@@ -32,4 +36,4 @@ When the user says "GA" or asks to create a release:
 
 ## Non-code changes
 
-For changes that touch only `.cursor/rules/`, `README.md`, `.env.example`, or similar docs — push the branch but do NOT bump the version or tag (no Docker build needed).
+For changes that touch only `.cursor/rules/`, `README.md`, `.env.example`, or similar docs — commit on `main` and push, but do NOT bump the version or tag (no Docker build needed).
